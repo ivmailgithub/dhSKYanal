@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fisheye Horizon Log Creator</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+        
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+        }
+        
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 10px;
+            font-size: 2.2em;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #7f8c8d;
+            margin-bottom: 30px;
+            font-style: italic;
+        }
+        
+        .upload-section {
+            margin-bottom: 30px;
+            padding: 25px;
+            border: 3px dashed #bdc3c7;
+            border-radius: 15px;
+            text-align: center;
+            transition: all 0.3s ease;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        }
+        
+        .upload-section:hover {
+            border-color: #667eea;
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.1);
+        }
+        
+        .file-input {
+            margin: 15px 0;
+            padding: 12px 24px;
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+        
+        .file-input:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-bottom: 20px;
+            padding: 20px;
+            background: linear-gradient(135deg, #f1f3f4 0%, #e8eaf6 100%);
+            border-radius: 15px;
+        }
+        
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .control-group label {
+            font-weight: 600;
+            color: #2c3e50;
+            font-size: 14px;
+        }
+        
+        input[type="number"], input[type="text"] {
+            padding: 10px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 14px;
+            transition: all 0.3s ease;
+            background: white;
+        }
+        
+        input[type="number"]:focus, input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        button {
+            padding: 12px 24px;
+            margin: 5px;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(45deg, #667eea, #764ba2);
+            color: white;
+        }
+        
+        .btn-secondary {
+            background: linear-gradient(45deg, #ffa726, #ff7043);
+            color: white;
+        }
+        
+        .btn-success {
+            background: linear-gradient(45deg, #66bb6a, #43a047);
+            color: white;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+        
+        .canvas-container {
+            text-align: center;
+            margin: 20px 0;
+            position: relative;
+        }
+        
+        canvas {
+            border: 3px solid #667eea;
+            border-radius: 15px;
+            cursor: crosshair;
+            max-width: 100%;
+            height: auto;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.2);
+        }
+        
+        .info-panel {
+            background: linear-gradient(135deg, #e3f2fd 0%, #f3e5f5 100%);
+            padding: 20px;
+            border-radius: 15px;
+            margin: 20px 0;
+            border-left: 5px solid #667eea;
+        }
+        
+        .info-panel h3 {
+            margin-top: 0;
+            color: #2c3e50;
+        }
+        
+        .output-section {
+            background: #1e1e1e;
+            border-radius: 15px;
+            padding: 25px;
+            margin: 20px 0;
+            position: relative;
+        }
+        
+        .output-section h3 {
+            color: #ffffff;
+            margin-top: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        pre {
+            background: #2d2d2d;
+            color: #a8e6cf;
+            padding: 20px;
+            border-radius: 10px;
+            overflow-x: auto;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+            line-height: 1.4;
+            border: 1px solid #404040;
+            max-height: 300px;
+        }
+        
+        .copy-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s ease;
+        }
+        
+        .copy-btn:hover {
+            background: #5a67d8;
+            transform: translateY(-1px);
+        }
+        
+        .points-list {
+            background: white;
+            border-radius: 10px;
+            padding: 15px;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            border: 2px solid #e0e0e0;
+        }
+        
+        .status {
+            padding: 15px;
+            border-radius: 10px;
+            margin: 10px 0;
+            font-weight: 600;
+            text-align: center;
+        }
+        
+        .status.success {
+            background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
+            color: #155724;
+            border: 2px solid #b8dacc;
+        }
+        
+        .status.error {
+            background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%);
+            color: #721c24;
+            border: 2px solid #f1aeb5;
+        }
+        
+        .instructions {
+            background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+            padding: 20px;
+            border-radius: 15px;
+            margin: 20px 0;
+            border-left: 5px solid #ffc107;
+        }
+        
+        .instructions h4 {
+            margin-top: 0;
+            color: #856404;
+        }
+        
+        .instructions ul {
+            color: #856404;
+            padding-left: 20px;
+        }
+        
+        .instructions li {
+            margin: 8px 0;
+        }
+        
+        @media (max-width: 768px) {
+            .controls {
+                flex-direction: column;
+            }
+            
+            .container {
+                padding: 15px;
+            }
+            
+            h1 {
+                font-size: 1.8em;
+            }
+        }
+        
+        .grid-overlay {
+            position: absolute;
+            pointer-events: none;
+            border-radius: 15px;
+        }
+        
+        .horizon-point {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background: #ff4757;
+            border: 2px solid white;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🌄 Fisheye Horizon Log Creator</h1>
+        <p class="subtitle">Create precise horizon files for Stellarium and SetiAstroSuitePro</p>
+        
+        <div class="upload-section">
+            <h3>📸 Upload Fisheye Image</h3>
+            <input type="file" id="imageFile" accept="image/*" class="file-input">
+            <p>Select a fisheye photograph to trace the horizon line</p>
+        </div>
+        
+        <div class="instructions">
+            <h4>📋 Instructions:</h4>
+            <ul>
+                <li><strong>Upload</strong> your fisheye image using the button above</li>
+                <li><strong>Configure</strong> your camera/lens parameters in the controls below</li>
+                <li><strong>Click</strong> along the horizon line in your image to create points</li>
+                <li><strong>Use</strong> the right-click menu to add/remove points or clear all</li>
+                <li><strong>Download</strong> the generated horizon log file for use in Stellarium/SetiAstroSuitePro</li>
+            </ul>
+        </div>
+        
+        <div class="controls">
+            <div class="control-group">
+                <label>Site Name:</label>
+                <input type="text" id="siteName" value="My Observatory" placeholder="Observatory name">
+            </div>
+            <div class="control-group">
+                <label>Latitude (°):</label>
+                <input type="number" id="latitude" value="40.7128" step="0.0001" placeholder="40.7128">
+            </div>
+            <div class="control-group">
+                <label>Longitude (°):</label>
+                <input type="number" id="longitude" value="-74.0060" step="0.0001" placeholder="-74.0060">
+            </div>
+            <div class="control-group">
+                <label>Image Center X:</label>
+                <input type="number" id="centerX" value="0" placeholder="0">
+            </div>
+            <div class="control-group">
+                <label>Image Center Y:</label>
+                <input type="number" id="centerY" value="0" placeholder="0">
+            </div>
+            <div class="control-group">
+                <label>FOV (degrees):</label>
+                <input type="number" id="fov" value="180" min="90" max="220" placeholder="180">
+            </div>
+            <div style="display: flex; gap: 10px; align-items: flex-end;">
+                <button class="btn-secondary" onclick="clearPoints()">🗑️ Clear Points</button>
+                <button class="btn-primary" onclick="generateHorizon()">⚡ Generate</button>
+                <button class="btn-success" onclick="downloadHorizon()" id="downloadBtn" disabled>💾 Download</button>
+            </div>
+        </div>
+        
+        <div class="canvas-container">
+            <canvas id="horizonCanvas" width="800" height="600"></canvas>
+            <div id="status"></div>
+        </div>
+        
+        <div class="info-panel">
+            <h3>📊 Horizon Points</h3>
+            <div id="pointsList" class="points-list">
+                No points defined yet. Click on the image to add horizon points.
+            </div>
+        </div>
+        
+        <div class="output-section" id="outputSection" style="display: none;">
+            <h3>📄 Generated Horizon Log File</h3>
+            <button class="copy-btn" onclick="copyToClipboard()">📋 Copy</button>
+            <pre id="horizonOutput"></pre>
+        </div>
+    </div>
+
+    <script>
+        let canvas, ctx;
+        let image = null;
+        let horizonPoints = [];
+        let imageScale = 1;
+        let imageOffsetX = 0;
+        let imageOffsetY = 0;
+        let generatedHorizonData = '';
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            canvas = document.getElementById('horizonCanvas');
+            ctx = canvas.getContext('2d');
+            
+            // Set up event listeners
+            document.getElementById('imageFile').addEventListener('change', loadImage);
+            canvas.addEventListener('click', addHorizonPoint);
+            canvas.addEventListener('contextmenu', showContextMenu);
+            
+            // Auto-update center when canvas is clicked
+            canvas.addEventListener('click', updateImageCenter);
+            
+            showStatus('Ready to load fisheye image', 'success');
+        });
+        
+        function loadImage(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                image = new Image();
+                image.onload = function() {
+                    resizeCanvasToImage();
+                    drawImage();
+                    showStatus('Image loaded successfully! Click to add horizon points.', 'success');
+                };
+                image.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+        
+        function resizeCanvasToImage() {
+            const maxWidth = 800;
+            const maxHeight = 600;
+            
+            let newWidth = image.width;
+            let newHeight = image.height;
+            
+            if (newWidth > maxWidth || newHeight > maxHeight) {
+                const ratio = Math.min(maxWidth / newWidth, maxHeight / newHeight);
+                newWidth *= ratio;
+                newHeight *= ratio;
+            }
+            
+            canvas.width = newWidth;
+            canvas.height = newHeight;
+            canvas.style.width = newWidth + 'px';
+            canvas.style.height = newHeight + 'px';
+            
+            imageScale = newWidth / image.width;
+            imageOffsetX = 0;
+            imageOffsetY = 0;
+            
+            // Update center point controls
+            document.getElementById('centerX').value = Math.round(newWidth / 2);
+            document.getElementById('centerY').value = Math.round(newHeight / 2);
+        }
+        
+        function drawImage() {
+            if (!image) return;
+            
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+            
+            // Draw center point
+            const centerX = parseInt(document.getElementById('centerX').value);
+            const centerY = parseInt(document.getElementById('centerY').value);
+            
+            ctx.strokeStyle = '#ff4757';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 10, 0, 2 * Math.PI);
+            ctx.stroke();
+            
+            ctx.beginPath();
+            ctx.moveTo(centerX - 15, centerY);
+            ctx.lineTo(centerX + 15, centerY);
+            ctx.moveTo(centerX, centerY - 15);
+            ctx.lineTo(centerX, centerY + 15);
+            ctx.stroke();
+            
+            // Draw horizon points
+            drawHorizonPoints();
+        }
+        
+        function addHorizonPoint(event) {
+            if (!image) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            
+            horizonPoints.push({x: x, y: y});
+            
+            // Sort points by angle from center
+            sortHorizonPoints();
+            
+            drawImage();
+            updatePointsList();
+            showStatus(`Added horizon point ${horizonPoints.length}`, 'success');
+        }
+        
+        function sortHorizonPoints() {
+            const centerX = parseInt(document.getElementById('centerX').value);
+            const centerY = parseInt(document.getElementById('centerY').value);
+            
+            horizonPoints.sort((a, b) => {
+                const angleA = Math.atan2(a.y - centerY, a.x - centerX);
+                const angleB = Math.atan2(b.y - centerY, b.x - centerX);
+                return angleA - angleB;
+            });
+        }
+        
+        function drawHorizonPoints() {
+            ctx.strokeStyle = '#ff4757';
+            ctx.fillStyle = '#ff4757';
+            ctx.lineWidth = 3;
+            
+            // Draw points
+            for (let i = 0; i < horizonPoints.length; i++) {
+                const point = horizonPoints[i];
+                ctx.beginPath();
+                ctx.arc(point.x, point.y, 5, 0, 2 * Math.PI);
+                ctx.fill();
+                
+                // Draw point number
+                ctx.fillStyle = 'white';
+                ctx.font = '12px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText((i + 1).toString(), point.x, point.y + 4);
+                ctx.fillStyle = '#ff4757';
+            }
+            
+            // Draw connecting lines
+            if (horizonPoints.length > 1) {
+                ctx.strokeStyle = '#ff4757';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(horizonPoints[0].x, horizonPoints[0].y);
+                for (let i = 1; i < horizonPoints.length; i++) {
+                    ctx.lineTo(horizonPoints[i].x, horizonPoints[i].y);
+                }
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+        }
+        
+        function updateImageCenter(event) {
+            // This is called when clicking, but we only update center if Alt key is held
+            if (event.altKey) {
+                const rect = canvas.getBoundingClientRect();
+                const x = event.clientX - rect.left;
+                const y = event.clientY - rect.top;
+                
+                document.getElementById('centerX').value = Math.round(x);
+                document.getElementById('centerY').value = Math.round(y);
+                
+                drawImage();
+                showStatus('Image center updated', 'success');
+                event.preventDefault();
+                return false;
+            }
+        }
+        
+        function pixelToAzimuthElevation(pixelX, pixelY) {
+            const centerX = parseInt(document.getElementById('centerX').value);
+            const centerY = parseInt(document.getElementById('centerY').value);
+            const fov = parseInt(document.getElementById('fov').value);
+            
+            const dx = pixelX - centerX;
+            const dy = pixelY - centerY;
+            
+            // Distance from center
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            // Maximum radius (assuming circular fisheye)
+            const maxRadius = Math.min(canvas.width, canvas.height) / 2;
+            
+            // Calculate elevation (0° at horizon, 90° at zenith)
+            const elevation = 90 - (distance / maxRadius) * (fov / 2);
+            
+            // Calculate azimuth (0° = North, 90° = East, 180° = South, 270° = West)
+            let azimuth = Math.atan2(dx, -dy) * (180 / Math.PI);
+            if (azimuth < 0) azimuth += 360;
+            
+            return {
+                azimuth: azimuth,
+                elevation: Math.max(0, elevation) // Don't allow negative elevations
+            };
+        }
+        
+        function generateHorizon() {
+            if (horizonPoints.length < 3) {
+                showStatus('Please add at least 3 horizon points', 'error');
+                return;
+            }
+            
+            const siteName = document.getElementById('siteName').value || 'My Observatory';
+            const latitude = parseFloat(document.getElementById('latitude').value) || 0;
+            const longitude = parseFloat(document.getElementById('longitude').value) || 0;
+            
+            let horizonData = `# Horizon file for ${siteName}\n`;
+            horizonData += `# Generated by Fisheye Horizon Log Creator\n`;
+            horizonData += `# Site coordinates: ${latitude.toFixed(6)}° N, ${longitude.toFixed(6)}° E\n`;
+            horizonData += `# \n`;
+            horizonData += `# Format: Azimuth(degrees) Elevation(degrees)\n`;
+            horizonData += `# \n`;
+            
+            // Convert each point to azimuth/elevation
+            for (let i = 0; i < horizonPoints.length; i++) {
+                const point = horizonPoints[i];
+                const coords = pixelToAzimuthElevation(point.x, point.y);
+                horizonData += `${coords.azimuth.toFixed(2)} ${coords.elevation.toFixed(2)}\n`;
+            }
+            
+            // Close the horizon by repeating first point with 360° azimuth if needed
+            if (horizonPoints.length > 0) {
+                const firstPoint = horizonPoints[0];
+                const firstCoords = pixelToAzimuthElevation(firstPoint.x, firstPoint.y);
+                if (firstCoords.azimuth > 10) { // Only add if first point isn't near 0°
+                    horizonData += `${(firstCoords.azimuth + 360).toFixed(2)} ${firstCoords.elevation.toFixed(2)}\n`;
+                }
+            }
+            
+            generatedHorizonData = horizonData;
+            
+            document.getElementById('horizonOutput').textContent = horizonData;
+            document.getElementById('outputSection').style.display = 'block';
+            document.getElementById('downloadBtn').disabled = false;
+            
+            showStatus(`Generated horizon file with ${horizonPoints.length} points`, 'success');
+        }
+        
+        function downloadHorizon() {
+            if (!generatedHorizonData) {
+                showStatus('Please generate horizon data first', 'error');
+                return;
+            }
+            
+            const siteName = document.getElementById('siteName').value || 'My_Observatory';
+            const filename = `${siteName.replace(/[^a-z0-9]/gi, '_')}_horizon.txt`;
+            
+            const blob = new Blob([generatedHorizonData], { type: 'text/plain' });
+            const url = window.URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            
+            window.URL.revokeObjectURL(url);
+            showStatus('Horizon file downloaded successfully!', 'success');
+        }
+        
+        function copyToClipboard() {
+            if (!generatedHorizonData) return;
+            
+            navigator.clipboard.writeText(generatedHorizonData).then(() => {
+                showStatus('Horizon data copied to clipboard!', 'success');
+                
+                // Temporary visual feedback
+                const btn = document.querySelector('.copy-btn');
+                const originalText = btn.textContent;
+                btn.textContent = '✅ Copied!';
+                setTimeout(() => {
+                    btn.textContent = originalText;
+                }, 2000);
+            }).catch(() => {
+                showStatus('Failed to copy to clipboard', 'error');
+            });
+        }
+        
+        function clearPoints() {
+            horizonPoints = [];
+            drawImage();
+            updatePointsList();
+            document.getElementById('outputSection').style.display = 'none';
+            document.getElementById('downloadBtn').disabled = true;
+            showStatus('All horizon points cleared', 'success');
+        }
+        
+        function updatePointsList() {
+            const list = document.getElementById('pointsList');
+            
+            if (horizonPoints.length === 0) {
+                list.textContent = 'No points defined yet. Click on the image to add horizon points.';
+                return;
+            }
+            
+            let content = `Horizon Points (${horizonPoints.length}):\n\n`;
+            
+            for (let i = 0; i < horizonPoints.length; i++) {
+                const point = horizonPoints[i];
+                const coords = pixelToAzimuthElevation(point.x, point.y);
+                content += `Point ${i + 1}: Az=${coords.azimuth.toFixed(1)}° El=${coords.elevation.toFixed(1)}°\n`;
+            }
+            
+            list.textContent = content;
+        }
+        
+        function showContextMenu(event) {
+            event.preventDefault();
+            
+            // Simple context menu - just clear points for now
+            if (confirm('Clear all horizon points?')) {
+                clearPoints();
+            }
+        }
+        
+        function showStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${type}`;
+            
+            // Auto-hide success messages after 3 seconds
+            if (type === 'success') {
+                setTimeout(() => {
+                    status.textContent = '';
+                    status.className = '';
+                }, 3000);
+            }
+        }
+        
+        // Update drawing when parameters change
+        ['centerX', 'centerY', 'fov'].forEach(id => {
+            document.getElementById(id).addEventListener('input', () => {
+                if (image) {
+                    drawImage();
+                    updatePointsList();
+                }
+            });
+        });
+    </script>
+</body>
+</html>
