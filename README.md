@@ -42,3 +42,4 @@ some 45 minutes in a windows terminal python .. 10 minutes in a wsl-ub24 python 
 
 oh and remember 99.9% of this code is ai generated ... claude gemini-2.5 z.ai-glm46 ..and i alternate through out the day/week as the freebie tokens run out
 i don't have my qwen3-coder setup locally yet
+oops some typo bugs in argparser which i didn't bother to fix since i run from the cmdline and skip the errors .. but when in doubt let gemini fix it so it adds to horizon file for the panorama.png generated ... but i get all 0's since sky edge detection needs to be fixed...  still the parorama.png is pretty in stellarium...
