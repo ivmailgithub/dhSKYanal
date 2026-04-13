@@ -53,3 +53,7 @@ about 4000 objects from simbad viz into a duckdb file and than scan it for the 1
 tree line in the NE sky .. to track maybe 4 hours as it crosses the sky above the house deck....  and claude generates
 an 1800 line html/typescript js app which almost animates but does show 50 targets and copies [telescopian](https://telescopius.com/) style app....
 of course your better off using https://telescopius.com/ than this .. the back end db request for v01h script takes over an hour frank sasp takes maybe a minute to csv ... so why am i doing a duckdb??? ; and caching works if you stay within the same radius so my cron job generates data for that part of the sky over a week in advance
+
+20260413 watching neaf youtube videos over the weekend .. and it dawn on me that everyone is preping for anti-drone contracts ... a network of thousands of dwarf minis like; spread like mobile cell towers to detect birds ducks geese??  gooses?
+
+is that why dwarflabs is cagy about the new api??  My dhskyanal is detecting the horizon via a web app and i was hoping to use the dwarf3 to make that horizon instead of processing a mobile phone video .. and now i got to make sure to exclude the word "drone" in the claude prompt because it will trigger a safety....
