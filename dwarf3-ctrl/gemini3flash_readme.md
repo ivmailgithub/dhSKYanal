@@ -312,6 +312,34 @@ I have implemented the test connection functionality both as a standalone script
    * Binary Protobuf Engine: I've included a manual Protobuf encoder for the WsPacket envelope and the
      ReqMotorServiceJoystick payload, so no external .proto compiler is needed.
 
+
+20260529 so geminicli is shutting down june18 ... so trying to use up the freebies and gemini3flashpreview
+seems to be able to control the dwarf.  test connection script needs like 1ike 5 attempts.  firmware 1.15.0.1
+says stays at STA but from cold start it wakes up at 88.1 again .. and you got to set to STA .. then disconnect
+from you phone app ... then reboot 3 times .. then test connect connects ... horizon pan just parks the scope
+does not do a pan
+
+gemini:
+
+It appears the Dwarf 3 needs to be "woken up" or explicitly unparked before it will accept motor movement commands. In
+  the official app, opening a camera stream usually triggers the unparking sequence.
+
+  I have updated the dwarf3_horizon_pan.py script with the following improvements:
+
+   1. Response Logging: The script now parses the response code from the device for the "Master Lock" request to ensure you
+      have control.
+   2. Wake-up Command: I added a command to Open the Tele Camera (10000) at the start. This should trigger the gimbal to
+      initialize and unpark the device.
+   3. Wait for Initialization: The script now waits 5 seconds after the "Open" command to allow the hardware to physically
+      move into an active state before starting the pan.
+   4. Error Detection: It now monitors for error codes (like CODE_STEP_MOTOR_NEED_RESET or WS_DEVICE_NOT_ACTIVATED) during
+      the scan.
+
+  Please try running the updated script:
+  python .\dwarf3_horizon_pan.py 192.168.1.92
+
+  If it still doesn't move, pay close attention to the Master Lock Response Code and any Device reported error messages in
+  the console.
   Usage:
   Run the script against your Dwarf 3 station IP:
   python .\dwarf3_horizon_pan.py 192.168.1.92
