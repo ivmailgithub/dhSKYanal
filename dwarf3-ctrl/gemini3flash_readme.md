@@ -885,3 +885,106 @@ I have identified why the phases seemed reversed: the high-level Joystick servic
   By using the raw ReqMotorRun commands, we are speaking directly to the motor drivers, which should be much more reliable
   than the pulsed joystick method.
 
+20260531f well that's it 100% tokens for the day
+I have created a specialized diagnostic script, dwarf3_angle_sweep.py, to empirically determine the correct motor mapping
+  for your firmware.
+
+  The "reversed phases" and "spin vs wiggle" suggest that the joystick angles (0, 90, 180, 270) are mapped differently in
+  your Dwarf 3 version than they were in the Dwarf II.
+
+  What the Sweep Script does:
+   1. Connects and claims the Master Lock.
+   2. Opens the camera to trigger the Unpark state.
+   3. Tests each cardinal direction (0.0, 90.0, 180.0, 270.0) for 3 seconds each.
+   4. Provides clear pauses between tests so you can observe exactly which angle causes which motion.
+
+  Action:
+  Please run this sweep script and watch the telescope closely:
+  python .\dwarf3_angle_sweep.py 192.168.1.92
+
+  Please report back what happened for each angle:
+   * 0.0: (e.g., Nothing / Lifted Tube / Spun Right)
+   * 90.0: (e.g., Nothing / Lifted Tube / Spun Right)
+   * 180.0: (e.g., Nothing / Lifted Tube / Spun Right)
+   * 270.0: (e.g., Nothing / Lifted Tube / Spun Right)
+
+  Once we have this map, I can fix the dwarf3_horizon_pan.py script to use the correct vectors and avoid the hard stop.
+
+still mixing up spin az with alt tube open from park back and forth ... i will note that the 1.5.0.1 firmware
+seems to be stuck in telephoto pan mode ... not wide angle pan which seems to have disappeared from the astro
+menus...  anyway tomorrow is another day 60 million tokens input ... agy is suppose to explode the token count.
+
+cat .\dwarf3_angle_sweep.py
+import asyncio
+import websockets
+import uuid
+import struct
+import time
+
+# --- PROTOBUF HELPERS ---
+
+def encode_varint(value):
+    if value < 0: value = (1 << 32) + value
+    buf = b''
+    while value >= 0x80:
+        buf += struct.pack('B', (value & 0x7f) | 0x80)
+        value >>= 7
+    buf += struct.pack('B', value & 0x7f)
+    return buf
+
+def build_ws_packet(module_id, cmd, data=b'', client_id="ce7293af-e445-4554-9142-62f22551698f", device_id=2):
+    packet = b'\x08\x02\x10\x03\x18' + encode_varint(device_id)
+    packet += b'\x20' + encode_varint(module_id)
+    packet += b'\x28' + encode_varint(cmd)
+    packet += b'\x30\x00'
+    packet += b'\x3a' + encode_varint(len(data)) + data
+    packet += b'\x42' + encode_varint(len(client_id)) + client_id.encode('utf-8')
+    return packet
+
+def build_joystick_payload(angle, length):
+    return b'\x09' + struct.pack('<d', float(angle)) + b'\x11' + struct.pack('<d', float(length))
+
+# --- DIAGNOSTIC SWEEP ---
+
+async def angle_sweep(ip):
+    cid = "ce7293af-e445-4554-9142-62f22551698f"
+    url = f"ws://{ip}:9900/?client_id={cid}"
+    print(f"SWEEP: Connecting to Dwarf 3 at {url}...")
+
+    try:
+        async with websockets.connect(url, open_timeout=5) as ws:
+            print("SWEEP: Connected.")
+
+            # 1. Master Lock
+            await ws.send(build_ws_packet(4, 13004, data=b'\x08\x01'))
+            # 2. Open Cam (Unpark Trigger)
+            await ws.send(build_ws_packet(1, 10000))
+            await asyncio.sleep(5)
+
+            # Test each cardinal direction for 3 seconds
+            for angle in [0, 90, 180, 270]:
+                print(f"\n--- TESTING ANGLE {angle}.0 ---")
+                packet = build_ws_packet(6, 14006, data=build_joystick_payload(angle, 1.0))
+
+                start = time.time()
+                while time.time() - start < 3:
+                    await ws.send(packet)
+                    await asyncio.sleep(0.1) # 10Hz Pulse
+
+                # Stop between tests
+                print(f"Stopping Angle {angle}...")
+                await ws.send(build_ws_packet(6, 14008))
+                await asyncio.sleep(2)
+
+            print("\nSWEEP COMPLETE. Please report what the telescope did for each angle.")
+
+    except Exception as e:
+        print(f"Sweep failed: {e}")
+
+if __name__ == "__main__":
+    import sys
+    target_ip = sys.argv[1] if len(sys.argv) > 1 else "192.168.1.92"
+    asyncio.run(angle_sweep(target_ip))
+
+
+so the last stop at 270degrees the tube is open at 30 degrees +  .. which is all day long from the original unpark yesterday to get back to open at the correct angle.  what rabbit holes  by the way the connection is suppose to generate your unique uuid along with auth-authorize if you snip this for your ip address (dwarf3_horizon.py) this test script just grabs my uuid
