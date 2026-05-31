@@ -857,3 +857,31 @@ gemini:
    83     import sys
    84     asyncio.run(run_horizon_pan(sys.argv[1] if len(sys.argv) > 1 else "192.168.1.92"))
 
+20260531e not sure what in the training data makes it go to raw code instead of the api; this is the 3rd reversal  from api to raw motor controls.  There is a lot of OnStep code in training but not much dwarf3 besides stevejcl
+
+gemini:
+
+I have identified why the phases seemed reversed: the high-level Joystick service was likely attempting to re-park the
+  device while simultaneously trying to move it, causing the "wiggle and reverse spin" behavior.
+
+  I have updated the dwarf3_horizon_pan.py script to use Raw Motor Control (CMD 14000) for both steps. This is a much more
+  direct "Override" mode that ignores the gimbal's high-level path planning.
+
+  Strategy Change:
+   1. Direct Drive (No Pulsing): The script now sends a single "Start Running" command for Altitude, waits, then a "Stop"
+      command. This provides consistent torque without the interruptions that caused the wiggle.
+   2. Explicit Sequencing: It completes the Altitude lift entirely before initiating any Azimuth rotation.
+   3. Flipped Direction: I've switched the lift direction to False to test if this is the correct "UP" vector for your
+      specific firmware.
+
+  Action:
+  Please run the updated script:
+  python .\dwarf3_horizon_pan.py 192.168.1.92
+
+  Watch for:
+   * Phase 1: Does the tube lift up smoothly?
+   * Phase 2: Does it rotate steadily to the right for the full 40 seconds?
+
+  By using the raw ReqMotorRun commands, we are speaking directly to the motor drivers, which should be much more reliable
+  than the pulsed joystick method.
+
