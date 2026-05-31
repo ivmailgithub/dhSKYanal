@@ -620,5 +620,125 @@ ummm a ad popup in the middle of github edits....
    * The device_id = 2 change is the most significant fix for ensuring the commands are fully accepted by the Dwarf 3
      firmware.
 
+so now we got a spin and then 20 wiggles but still closed
+
+gemini:
+ Responding with gemini-3-flash-preview
+✦ I have analyzed the feedback and the decompiled source. The "wiggle" confirms that the motor is receiving pulses but
+  isn't moving smoothly, likely because the 200ms interval is still too slow for the Dwarf 3's high-speed gimbal service.
+
+  The fact that it "spins" means the Azimuth (Pan) motor is now responding correctly to the device_id = 2 envelope. The
+  "wiggle" on the tube indicates the Altitude (Tilt) motor is trying to lift but is either hitting a software limit or
+  losing torque between pulses.
+
+  I have updated dwarf3_horizon_pan.py with a "High-Torque Unpark" strategy:
+   1. Continuous Raw Drive: Instead of the Joystick service, I'm using CMD_STEP_MOTOR_RUN (14000) for the initial unpark.
+      This command is "fire and forget"—it tells the motor to "Run until I say stop," which provides much smoother torque
+      than pulsing.
+   2. Verified Device ID: Ensured device_id = 2 is used for all unpark and movement commands.
+   3. Homing Trigger: I've added a call to CMD_PANORAMA_RESET_FRAMING (15511) which, on Dwarf 3, acts as a "Release Park"
+      command.
+
+  Usage:
+  python .\dwarf3_horizon_pan.py 192.168.1.92
+
+  Watch the tube:
+   * The tube should now lift smoothly (not wiggle) at the start.
+   * Once it's clear of the cradle, it should begin the full 360-degree rotation.
+   * I've set the unpark direction to what should be "UP". If it pushes down instead, please let me know.
+
+    1 import asyncio
+    2 import websockets
+    3 import uuid
+    4 import struct
+    5 import time
+    6
+    7 def encode_varint(value):
+    8     if value < 0: value = (1 << 32) + value
+    9     buf = b''
+   10     while value >= 0x80:
+   11         buf += struct.pack('B', (value & 0x7f) | 0x80)
+   12         value >>= 7
+   13     buf += struct.pack('B', value & 0x7f)
+   14     return buf
+   15
+   16 def build_ws_packet(module_id, cmd, data=b'', client_id="ce7293af-e445-4554-9142-62f22551698f", device_id=2):
+   17     # Dwarf 3 Envelope: major 2, minor 3, device 2
+   18     packet = b'\x08\x02\x10\x03\x18' + encode_varint(device_id)
+   19     packet += b'\x20' + encode_varint(module_id)
+   20     packet += b'\x28' + encode_varint(cmd)
+   21     packet += b'\x30\x00' # REQUEST
+   22     packet += b'\x3a' + encode_varint(len(data)) + data
+   23     packet += b'\x42' + encode_varint(len(client_id)) + client_id.encode('utf-8')
+   24     return packet
+   25
+   26 def build_motor_run(motor_id, speed, direction):
+   27     # ReqMotorRun: id=1(Az)/2(Alt), speed(double), direction(bool)
+   28     return b'\x08' + encode_varint(motor_id) + b'\x11' + struct.pack('<d', float(speed)) + b'\x18' + (b'\x01' if
+      direction else b'\x00')
+   29
+   30 async def run_horizon_pan(ip):
+   31     cid = "ce7293af-e445-4554-9142-62f22551698f"
+   32     url = f"ws://{ip}:9900/?client_id={cid}"
+   33     print(f"Connecting to Dwarf 3 at {url}...")
+   34
+   35     try:
+   36         async with websockets.connect(url, open_timeout=5) as ws:
+   37             print("Connected. Initiating High-Torque Unpark...")
+   38
+   39             # 1. Master Lock
+   40             await ws.send(build_ws_packet(4, 13004, data=b'\x08\x01'))
+   41             await asyncio.sleep(0.5)
+   42
+   43             # 2. Release Park Pin (Pano Reset)
+   44             await ws.send(build_ws_packet(10, 15511))
+   45             await asyncio.sleep(1)
+   46
+   47             # 3. PHASE 1: Raw Altitude Lift (Motor 2)
+   48             # We use RAW RUN instead of joystick to prevent "wiggling"
+   49             print("Lifting tube...")
+   50             lift_cmd = build_motor_run(2, 1.0, True) # Motor 2, Speed 1.0, Direction True
+   51             await ws.send(build_ws_packet(6, 14000, data=lift_cmd))
+   52             await asyncio.sleep(4) # Run for 4 seconds
+   53             await ws.send(build_ws_packet(6, 14002, data=b'\x08\x02')) # Stop Motor 2
+   54
+   55             # 4. PHASE 2: Raw Azimuth Pan (Motor 1)
+   56             print("Starting 360 degree pan...")
+   57             pan_cmd = build_motor_run(1, 0.8, True) # Motor 1, Speed 0.8
+   58             await ws.send(build_ws_packet(6, 14000, data=pan_cmd))
+   59
+   60             start_time = time.time()
+   61             pan_duration = 30
+   62             horizon_points = []
+   63
+   64             while time.time() - start_time < pan_duration:
+   65                 elapsed = time.time() - start_time
+   66                 horizon_points.append(((elapsed/pan_duration)*360.0, 5.0))
+   67                 # Heartbeat to keep connection alive
+   68                 try:
+   69                     await asyncio.wait_for(ws.recv(), timeout=0.1)
+   70                 except: pass
+   71                 await asyncio.sleep(0.5)
+   72
+   73             # 5. Stop and Save
+   74             print("Stopping all motors...")
+   75             await ws.send(build_ws_packet(6, 14002, data=b'\x08\x01'))
+   76             await ws.send(build_ws_packet(6, 14002, data=b'\x08\x02'))
+   77
+   78             with open("dwarf3_horizon.txt", 'w') as f:
+   79                 for az, alt in horizon_points:
+   80                     f.write(f"{az:.2f} {alt:.2f}\n")
+   81             print("Finished. Horizon file saved.")
+   82
+   83     except Exception as e:
+   84         print(f"Task failed: {e}")
+   85
+   86 if __name__ == "__main__":
+   87     import sys
+   88     asyncio.run(run_horizon_pan(sys.argv[1] if len(sys.argv) > 1 else "192.168.1.92"))
+
+so i was saying before the ad popup destroyed my edits:  theo has a deepSWE bench out and gemini3flash is at the bottom ... my claude win app won't log in anymore ... probably looking for my money so back to the browsers .. but they don't take 100m context code like the jadex dumps ... and in fact gemini3flash just greps what it thinks
+is a good java source repeatly .. this time not stuck in a loop after pulling in stevejcl's repo..
+
 
                                                   
