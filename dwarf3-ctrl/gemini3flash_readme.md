@@ -742,3 +742,118 @@ is a good java source repeatly .. this time not stuck in a loop after pulling in
 
 
                                                   
+20260531d well looks like i've burned the tokens for the day this final fragment is at 83%
+i don't think agy 35flash is going to be any better given the limited context
+
+gemini:
+✦ The diagnostic output reveals a critical clue: the Dwarf 3 is sending notifications with a protocol version of Major 1,
+  Minor 8, while our scripts have been using Major 2, Minor 3 (based on the newer decompiled code).
+
+  The fact that you received a WS_HOST_SLAVE_MODE notification (CMD 15223) confirms the device is seeing your Master Lock
+  request, but it's responding with a status broadcast instead of a direct acknowledgement.
+
+  I have updated the dwarf3_horizon_pan.py script to match the device's preferred protocol version and implemented a
+  Steady-Pulse Unpark sequence.
+
+  Key Changes:
+   1. Protocol Version 1.8: Switched the envelope to major=1, minor=8 to match the packets being sent by your telescope.
+   2. Fast Pulsed Unpark: The Altitude lift (Phase 1) now pulses at 20Hz (50ms). This higher frequency is often required by
+      Dwarf 3 to maintain motor torque and prevent the "wiggle" (stalling) you saw earlier.
+   3. Homing Trigger: Keeps the 15511 (Pano Reset) command, which acts as a "Release Park" signal.
+   4. Direction Testing: I have set the lift direction to True. If it still wiggles into the cradle, we'll flip it to
+      False.
+
+  Action:
+  Please run this updated script:
+  python .\dwarf3_horizon_pan.py 192.168.1.92
+
+  Watch for:
+   * Does the tube lift smoothly and fully (90 degrees)?
+   * Once lifted, does it begin a steady 360-degree rotation?
+
+    1 import asyncio
+    2 import websockets
+    3 import uuid
+    4 import struct
+    5 import time
+    6
+    7 def encode_varint(value):
+    8     if value < 0: value = (1 << 32) + value
+    9     buf = b''
+   10     while value >= 0x80:
+   11         buf += struct.pack('B', (value & 0x7f) | 0x80)
+   12         value >>= 7
+   13     buf += struct.pack('B', value & 0x7f)
+   14     return buf
+   15
+   16 def build_ws_packet(module_id, cmd, data=b'', client_id="ce7293af-e445-4554-9142-62f22551698f", device_id=2):
+   17     # MATCHING DEVICE VERSION: major=1, minor=8
+   18     packet = b'\x08\x01\x10\x08\x18' + encode_varint(device_id)
+   19     packet += b'\x20' + encode_varint(module_id)
+   20     packet += b'\x28' + encode_varint(cmd)
+   21     packet += b'\x30\x00' # REQUEST
+   22     packet += b'\x3a' + encode_varint(len(data)) + data
+   23     packet += b'\x42' + encode_varint(len(client_id)) + client_id.encode('utf-8')
+   24     return packet
+   25
+   26 def build_joystick_payload(angle, length):
+   27     return b'\x09' + struct.pack('<d', float(angle)) + b'\x11' + struct.pack('<d', float(length))
+   28
+   29 async def run_horizon_pan(ip):
+   30     cid = "ce7293af-e445-4554-9142-62f22551698f"
+   31     url = f"ws://{ip}:9900/?client_id={cid}"
+   32     print(f"Connecting to Dwarf 3 at {url}...")
+   33
+   34     try:
+   35         async with websockets.connect(url, open_timeout=5) as ws:
+   36             print("Connected. Initiating Version 1.8 Unpark...")
+   37
+   38             # 1. Master Lock
+   39             await ws.send(build_ws_packet(4, 13004, data=b'\x08\x01'))
+   40             await asyncio.sleep(0.5)
+   41
+   42             # 2. Release Park
+   43             await ws.send(build_ws_packet(10, 15511))
+   44             await asyncio.sleep(1)
+   45
+   46             # 3. PHASE 1: Lift Tube (Angle 0 = Up)
+   47             print("Phase 1: Lifting Tube (50ms Pulse)...")
+   48             up_packet = build_ws_packet(6, 14006, data=build_joystick_payload(0.0, 1.0))
+   49             start = time.time()
+   50             while time.time() - start < 6:
+   51                 await ws.send(up_packet)
+   52                 await asyncio.sleep(0.05) # 20Hz Pulse
+   53
+   54             # 4. PHASE 2: 360 Pan (Angle 90 = Right)
+   55             print("Phase 2: Starting 360 degree pan...")
+   56             right_packet = build_ws_packet(6, 14006, data=build_joystick_payload(90.0, 0.6)) # Slightly slower for
+      smoothness
+   57             start = time.time()
+   58             pan_duration = 35
+   59             horizon_points = []
+   60
+   61             while time.time() - start < pan_duration:
+   62                 await ws.send(right_packet)
+   63                 elapsed = time.time() - start
+   64                 horizon_points.append(((elapsed/pan_duration)*360.0, 5.0))
+   65                 try:
+   66                     await asyncio.wait_for(ws.recv(), timeout=0.01)
+   67                 except: pass
+   68                 await asyncio.sleep(0.05)
+   69
+   70             # 5. Stop
+   71             print("Stopping...")
+   72             await ws.send(build_ws_packet(6, 14008))
+   73
+   74             with open("dwarf3_horizon.txt", 'w') as f:
+   75                 for az, alt in horizon_points:
+   76                     f.write(f"{az:.2f} {alt:.2f}\n")
+   77             print("Finished. Horizon file saved.")
+   78
+   79     except Exception as e:
+   80         print(f"Task failed: {e}")
+   81
+   82 if __name__ == "__main__":
+   83     import sys
+   84     asyncio.run(run_horizon_pan(sys.argv[1] if len(sys.argv) > 1 else "192.168.1.92"))
+
