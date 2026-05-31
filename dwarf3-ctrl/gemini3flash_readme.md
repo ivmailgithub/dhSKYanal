@@ -589,3 +589,36 @@ The "wiggle" and failure to open fully suggest that the fast-pulsing commands (e
   youtube of models hallunicating functions in a code base .. not actually reading the code base; and here we have a jadex
   decompile which stubs names/fn/constants.  Also seems to have forgotten the park fn that worked when we started but
   going to direct motor pulses seems to be a dead end...we just got the tube wiggling at park.
+
+ummm a ad popup in the middle of github edits....
+
+
+✦ I have identified two critical issues that were likely preventing the full unpark and continuous movement of your Dwarf
+  3:
+
+   1. Device ID Mismatch: The Dwarf 3 identifies itself as Device ID 2, whereas my previous scripts were sending commands
+      with Device ID 1 (for Dwarf II). The device notification I decoded confirms it expects ID 2.
+   2. Initialization Sequence: Based on the dwarfium source you provided, a specific command, CMD_PANORAMA_RESET_FRAMING
+      (15511), is often required to "zero" or release the gimbal from its software-locked parked state.
+
+  I have updated the dwarf3_horizon_pan.py script to incorporate these findings.
+
+  Key Changes:
+   * Device ID: All packets now use device_id = 2 to match the Dwarf 3 specification.
+   * The "Dwarfium" Trick: The script now sends CMD_PANORAMA_RESET_FRAMING (15511) immediately after opening the camera.
+     This should clear the internal "Parked" flag.
+   * Extended Initialization: Increased the wait times to allow the gimbal motors to mechanically disengage from the
+     physical park cradle before movement starts.
+
+  Usage:
+  Run the updated script:
+  python .\dwarf3_horizon_pan.py 192.168.1.92
+
+  Troubleshooting watch-points:
+   * If the tube still just "wiggles" at the start of Phase 1, it's possible that Angle 0 is actually "Down" on the Dwarf
+     3. If it seems to be pushing into the cradle, I can flip the logic to Angle 180.
+   * The device_id = 2 change is the most significant fix for ensuring the commands are fully accepted by the Dwarf 3
+     firmware.
+
+
+                                                  
