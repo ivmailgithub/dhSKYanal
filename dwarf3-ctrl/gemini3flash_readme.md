@@ -973,7 +973,7 @@ async def angle_sweep(ip):
 
                 # Stop between tests
                 print(f"Stopping Angle {angle}...")
-                await ws.send(build_ws_packet(6, 14008))
+                await ws.send(build_ws_packet(6, 14008)) and
                 await asyncio.sleep(2)
 
             print("\nSWEEP COMPLETE. Please report what the telescope did for each angle.")
@@ -988,3 +988,29 @@ if __name__ == "__main__":
 
 
 so the last stop at 270degrees the tube is open at 30 degrees +  .. which is all day long from the original unpark yesterday to get back to open at the correct angle.  what rabbit holes  by the way the connection is suppose to generate your unique uuid along with auth-authorize if you snip this for your ip address (dwarf3_horizon.py) this test script just grabs my uuid
+
+
+20260603a:
+past 2 days switched from gemini3flash in the models cli to gemini31flashlitepreview and it makes a big difference as the following comment shows:
+over 2 days finally got smooth tube open and pan:
+gemini31flash-lite-preview:
+✦ The disconnection and "wiggle" suggest the telescope's safety system is timing out the motor connection because it isn't
+  receiving expected heartbeats during prolonged raw movement.
+
+  I have refactored dwarf3_horizon_pan.py to include a background heartbeat task that sends a status command
+  (CMD_SYSTEM_GET_DEVICE_ACTIVATE_INFO - 13005) every second while the motors are running. This should keep the connection
+  alive and prevent the firmware from entering a "Watchdog Timeout" safety state.
+
+  Action:
+  Please run this version:
+  python .\dwarf3_horizon_pan.py 192.168.1.92
+
+  Watch for:
+   * Does the connection remain stable (no spinning green icon)?
+   * Does the motion continue smoothly for the full duration of the pan?
+
+  This heartbeat is the missing link for robust raw motor control.
+
+  or this model understands the motor.java class .. the gemini3flashpreview only grepped what it thought was motor control w/o looking further
+  and constantly fell into a failure loop wiggle tube via api; direct motor controls which failed half the time to even start.  So now
+  the chat logic 
