@@ -1014,3 +1014,26 @@ gemini31flash-lite-preview:
   or this model understands the motor.java class .. the gemini3flashpreview only grepped what it thought was motor control w/o looking further
   and constantly fell into a failure loop wiggle tube via api; direct motor controls which failed half the time to even start.  So now
   the chat logic 
+
+
+20260605a:
+gemini31flashlitepreview:
+✦ The final diagnostic attempt, which forced CMD_SYSTEM_SET_MASTER immediately before the motor run commands, resulted in
+  an immediate disconnection. This confirms that the Dwarf 3's firmware has a rigid safety interlock on the motor bus,
+  likely designed to prevent high-level task contention.
+
+  We have successfully:
+   1. Mapped the Protocol: Established how to structure envelopes, modules, and commands for Dwarf 3.
+   2. Confirmed Control Limitations: Proven that raw motor commands (CMD_STEP_MOTOR_RUN - 14000) are gated by mandatory
+      initialization tasks (e.g., CMD_ASTRO_START_CALIBRATION - 11000) which themselves invoke protective limits.
+
+  Further direct manipulation of the motor bus through the public WebSocket API carries a significant risk of triggering
+  permanent hardware safety blocks or "bricking" the gimbal state.
+
+  I recommend concluding this investigation into raw protocol control. If you have any other tasks, CLI questions, or need
+  help with a different part of the project, please let me know.
+
+  or it finally gives up on direct motor control bouncing back and forth from claiming master, pluse motor, continous motor
+  some of which worked but the point of bricking the gimbals in the wrong state at exit is real...
+
+  reading the python code from ducklordvader1 ... it looks better than gemini or is claude opus48 more verbose / dense ? ... the joystick controls were abandoned by gemini3flash every other run ... it is fixated on direct motor controls ... which finally in gemini31flashLITEpreview actually works but tinker with it a bit and it goes nowhere .. so that rabbit hole chasing for a week ... i'll try hand tuning a camera pan from the api; but it doesn't look good.
