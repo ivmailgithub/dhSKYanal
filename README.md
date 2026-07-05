@@ -57,3 +57,7 @@ of course your better off using https://telescopius.com/ than this .. the back e
 20260413 watching neaf youtube videos over the weekend .. and it dawn on me that everyone is preping for anti-drone contracts ... a network of thousands of dwarf minis like; spread like mobile cell towers to detect birds ducks geese??  gooses?
 
 is that why dwarflabs is cagy about the new api??  My dhskyanal is detecting the horizon via a web app and i was hoping to use the dwarf3 to make that horizon instead of processing a mobile phone video .. and now i got to make sure to exclude the word "drone" in the claude prompt because it will trigger a safety....
+
+20260705 using ducklordvader1/dwarf3tostellarium code and the mountain of broken test scripts in dwarf3-ctl i drop it into 
+agy gemini35flash-high and in 3 weeks it goes in loops burning up my weekly quota of 10 minutes of use ... and on a lark i change over to sonnet46 ... and it writes a plan and implements .. and it works!! it does the auth/activation on ducklordvader1's code base!! it even implements a fleet-manager for 10 dwarfs...now for api testing instead of this raw motor control nonsense which seems to come from the OnStep training data...
+
