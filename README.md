@@ -61,3 +61,9 @@ is that why dwarflabs is cagy about the new api??  My dhskyanal is detecting the
 20260705 using ducklordvader1/dwarf3tostellarium code and the mountain of broken test scripts in dwarf3-ctl i drop it into 
 agy gemini35flash-high and in 3 weeks it goes in loops burning up my weekly quota of 10 minutes of use ... and on a lark i change over to sonnet46 ... and it writes a plan and implements .. and it works!! it does the auth/activation on ducklordvader1's code base!! it even implements a fleet-manager for 10 dwarfs...now for api testing instead of this raw motor control nonsense which seems to come from the OnStep training data...
 
+20260713 https://github.com/nirzons/HorizonStudio ... some real programming instead of vibeXX. More importantly real design spec's instead of off the cuff vibeXX on what works before your tokens burn up. Finally found both https://github.com/alikh31/dwarflab-viewer with his dwarflabs-sdk and https://github.com/ducklordvader1/dwarf3_webserver in their own repos ... i was stuck on the original ... and my sonnet46 version webcam requires rstp permissions or COREs in the browser settings for permissions. so i got to read their code to see how they implemented liveview.  sonnet tacked on tabs to the dwarf3tostellarium app so now i got 4 tabs.  The fleet-manager for 10 dwarfs actually shows the devices on the network ... will try ascom seestar50's later...
+
+And this comes up because of Cuiv's brutal review of luke's AstroWizard ... the prompts must of started with a vb style buttons spec because any US foundation model now produces beautiful UI's  ... like the cgi world of state gov sites in the 2000's ... vs react today.
+
+Anyway pretty it up as an exercise but nirzons HorizonStudio is killer...and i got to fire up nina and try it out.
+
