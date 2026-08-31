@@ -71,3 +71,5 @@ anyway the fleet manager still doesn't show the rstp streams on all the scopes .
 
 
 and the ridiculious pricing by celestron for starsense platesolving and starsense guiders on a CO6 twp pices of equipment i have but could be dup'ed by $100 diy kit strapped to your seestar50 where tracking is "iffy"
+
+20260831 so dwarflabs shows drac as guiding 5 min exposures .. so did they do the same ai programming for the wide angle lens and get it to work for 300 sec exposures??  They show an example so maybe it works from the wide angle cam...
