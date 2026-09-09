@@ -1,4 +1,5 @@
-/**
+/** 20260909
+update to lithophane version; this version does a relief volume which prints bad
  * Cylindrical Multicolor Star Map — STEP File Generator (Node.js Version)
  * ======================================================================
  * Projects an astronomical star chart with color data onto a 3D printable
