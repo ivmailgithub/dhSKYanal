@@ -1,43 +1,44 @@
 #!/usr/bin/env python3
 """
-Cylindrical Multicolor Star Map — STEP File Generator (Python Version)
-======================================================================
-Projects an astronomical star chart with color data onto a 3D printable
-cylinder in STEP (ISO 10303-21 AP214) format.
+Cylindrical Multicolor Star Map Lithophane — STEP File Generator (Python Version)
+================================================================================
+Projects an astronomical star chart onto a 3D printable cylinder in STEP
+(ISO 10303-21 AP214/AP242) format for multicolor 3D printing (Bambu AMS, OrcaSlicer,
+PrusaSlicer).
 
 Key Design & Engineering Features:
-- Natural astronomical orientation (Right Ascension wraps 360° circumferentially;
-  Declination spans the cylinder axis Z with date lines at the bottom).
-- Strict 1:1 isotropic scale so features and star dots are never stretched.
-- Hierarchical assembly root: 'StarMap_Cylinder'. Slicers (Bambu Studio, OrcaSlicer,
-  PrusaSlicer) load it as a single object with 4 distinct color parts:
-    1. Space_Background   (Navy: #0a0e27) — Solid base cylinder tube with bottom flange
-    2. Constellation_Lines (Blue: #2e6fd9) — Raised constellation figures & text (+1.2 mm)
-    3. Index_Lines         (Cyan: #8ab4f8) — Raised coordinate grid & bottom date ruler (+1.8 mm)
-    4. Stars               (White: #ffffff) — Raised round circular dots (+2.5 mm)
-- Every star point is modeled as a true round circular dot with metric radius,
-  never stretched into an oval.
-- 100% 2-manifold, watertight closed solids natively compatible with all CAD & slicers.
+- Natural astronomical orientation: Right Ascension wraps 360° circumferentially;
+  Declination spans the cylinder axis Z with date markings at the bottom (Z approx 0).
+- Lithophane interior: Wall thickness varies smoothly based on image brightness
+  (thin wall for bright stars/lines to let light through, thick wall for dark space).
+- Smooth exterior: Constant outer radius (zero exterior relief bumps) so prints
+  are smooth to the touch, print reliably without nozzle knocking or wipe-tower collapses.
+- Multicolor assembly: 4 distinct color parts matching the sky map colors:
+    1. Space_Background   (Navy: #0a0e27)  — Full lithophane hollow cylinder tube with base flange
+    2. Stars              (Yellow: #ffd700) — Metric round circular star dots
+    3. Constellation_Lines(Blue: #2e6fd9)  — Constellation stick figures and text
+    4. Index_Lines        (Cyan: #8ab4f8)  — Coordinate grid (RA/Dec) & bottom date ruler
+- 100% 2-manifold, watertight closed solids natively compatible with all CAD kernels & slicers.
 - Zero crashes, zero sewing hangs in OpenCASCADE / BambuStudio / OrcaSlicer.
 
 Usage:
-  py -3.12 convert.py [options]
+  python convert.py [options]
 
 Options:
   --input <file>         Input image file (default: auto-detect)
   --output <file>        Output STEP file (default: image0_cylinder.stp)
-  --radius <mm>          Inner cylinder radius in mm (default: 32.0)
-  --base-wall <mm>       Solid base wall thickness in mm (default: 1.5)
-  --relief-stars <mm>    Relief height for star points in mm (default: 2.5)
-  --relief-index <mm>    Relief height for index & grid lines in mm (default: 1.8)
-  --relief-lines <mm>    Relief height for constellation lines in mm (default: 1.2)
-  --base-flange <mm>     Bottom mounting flange thickness in mm (default: 2.0)
-  --grid-w <num>         Grid width for line relief (default: 180)
-  --grid-h <num>         Grid height for line relief (default: 113)
+  --radius <mm>          Outer cylinder radius in mm (default: 35.0)
+  --height <mm>          Cylinder height in mm (default: auto isotropic ~138mm)
+  --min-wall <mm>        Thinnest wall section for brightest pixels in mm (default: 0.8)
+  --max-wall <mm>        Thickest wall section for darkest pixels in mm (default: 2.2)
+  --base-flange <mm>     Bottom mounting flange height in mm (default: 2.0)
+  --relief <mm>          Exterior relief height in mm (default: 0.0 = smooth lithophane)
+  --grid-w <num>         Circumferential grid resolution (default: 180)
+  --grid-h <num>         Axial grid resolution (default: 113)
   --color-bg <hex>       Hex color for space background (default: 0a0e27)
-  --color-stars <hex>    Hex color for stars (default: ffffff)
-  --color-index <hex>    Hex color for index & grid lines (default: 8ab4f8)
+  --color-stars <hex>    Hex color for stars (default: ffd700)
   --color-lines <hex>    Hex color for constellation lines (default: 2e6fd9)
+  --color-index <hex>    Hex color for index/dates (default: 8ab4f8)
   --help                 Show this help
 """
 
@@ -61,21 +62,21 @@ def hex_to_rgb(hex_str):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Convert Star Map image to 3D printable multicolor STEP cylinder.")
+    parser = argparse.ArgumentParser(description="Convert Star Map image to 3D printable multicolor lithophane STEP cylinder.")
     parser.add_argument('--input', type=str, default=None, help="Input image path")
     parser.add_argument('--output', type=str, default='image0_cylinder.stp', help="Output STEP file path")
-    parser.add_argument('--radius', type=float, default=32.0, help="Inner cylinder radius in mm (default: 32.0)")
-    parser.add_argument('--base-wall', type=float, default=1.5, help="Base cylinder wall thickness in mm (default: 1.5)")
-    parser.add_argument('--relief-stars', type=float, default=2.5, help="Star relief height in mm (default: 2.5)")
-    parser.add_argument('--relief-index', type=float, default=1.8, help="Index/date relief height in mm (default: 1.8)")
-    parser.add_argument('--relief-lines', type=float, default=1.2, help="Constellation lines relief in mm (default: 1.2)")
-    parser.add_argument('--base-flange', type=float, default=2.0, help="Bottom mounting flange height in mm (default: 2.0)")
-    parser.add_argument('--grid-w', type=int, default=180, help="Relief grid width (circumferential steps, default: 180)")
-    parser.add_argument('--grid-h', type=int, default=113, help="Relief grid height (axial steps, default: 113)")
-    parser.add_argument('--color-bg', type=str, default='0a0e27', help="Hex color for space background")
-    parser.add_argument('--color-stars', type=str, default='ffffff', help="Hex color for stars")
-    parser.add_argument('--color-index', type=str, default='8ab4f8', help="Hex color for index/dates")
-    parser.add_argument('--color-lines', type=str, default='2e6fd9', help="Hex color for constellation lines")
+    parser.add_argument('--radius', '--radious', dest='radius', type=float, default=35.0, help="Outer cylinder radius in mm (default: 35.0)")
+    parser.add_argument('--height', type=float, default=None, help="Cylinder height in mm (default: auto isotropic)")
+    parser.add_argument('--min-wall', type=float, default=0.8, help="Thinnest wall section (brightest) in mm (default: 0.8)")
+    parser.add_argument('--max-wall', type=float, default=2.2, help="Thickest wall section (darkest) in mm (default: 2.2)")
+    parser.add_argument('--base-flange', '--base', dest='base_flange', type=float, default=2.0, help="Bottom mounting flange height in mm (default: 2.0)")
+    parser.add_argument('--relief', type=float, default=0.0, help="Exterior relief in mm (default: 0.0 = smooth lithophane)")
+    parser.add_argument('--grid-w', '--angle', dest='grid_w', type=int, default=180, help="Circumferential grid steps (default: 180)")
+    parser.add_argument('--grid-h', '--vert', dest='grid_h', type=int, default=113, help="Axial grid steps (default: 113)")
+    parser.add_argument('--color-bg', '--color0', dest='color_bg', type=str, default='0a0e27', help="Hex color for space background")
+    parser.add_argument('--color-stars', '--color1', dest='color_stars', type=str, default='ffd700', help="Hex color for stars")
+    parser.add_argument('--color-lines', '--color2', dest='color_lines', type=str, default='2e6fd9', help="Hex color for constellation lines")
+    parser.add_argument('--color-index', '--color3', dest='color_index', type=str, default='8ab4f8', help="Hex color for index/dates")
     return parser.parse_args()
 
 
@@ -104,6 +105,7 @@ def main():
             print("Error: No input image found. Specify with --input <file>")
             sys.exit(1)
 
+    print("=== Cylindrical Multicolor Star Map Lithophane Generator (Python) ===")
     print(f"Loading image: {input_file}")
     img = Image.open(input_file).convert('RGB')
 
@@ -113,34 +115,33 @@ def main():
     rot_img = img.transpose(Image.Transpose.ROTATE_90)
     rot_arr = np.array(rot_img)
     H_orig, W_orig, _ = rot_arr.shape
-    print(f"Rotated image: {W_orig}x{H_orig} (Circumference: {W_orig}px, Height: {H_orig}px)")
+    print(f"Astronomical orientation: {W_orig}x{H_orig} (RA circumference: {W_orig}px, Dec height: {H_orig}px)")
 
-    R_in = args.radius
-    base_wall = args.base_wall
-    R_base = R_in + base_wall
-    R_sub = R_base - 0.2
-    R_floor = R_base - 0.1
-    relief_stars = args.relief_stars
-    relief_index = args.relief_index
-    relief_lines = args.relief_lines
+    R_outer = args.radius
+    min_wall = args.min_wall
+    max_wall = args.max_wall
     base_flange = args.base_flange
+    relief = max(0.0, args.relief)
     nw = args.grid_w
     nh = args.grid_h
 
     # Isotropic metric scaling
-    C = 2 * math.pi * R_base
+    C = 2 * math.pi * R_outer
     scale = C / W_orig
-    H_cyl = H_orig * scale
-    print(f"Cylinder dimensions: R_in={R_in:.1f} mm, R_base={R_base:.1f} mm, H={H_cyl:.2f} mm (Scale: {scale:.4f} mm/px)")
+    H_cyl = args.height if args.height is not None else (H_orig * scale)
+    print(f"Cylinder parameters: Outer R={R_outer:.2f} mm, Height={H_cyl:.2f} mm")
+    print(f"Lithophane wall thickness: {min_wall:.2f} mm (bright) to {max_wall:.2f} mm (dark)")
+    print(f"Exterior relief: {relief:.2f} mm ({'Smooth lithophane' if relief == 0 else 'Raised relief'})")
+    print(f"Resolution: {nw} angular x {nh} axial grid")
 
-    # Downsampled image for line relief
+    # Downsampled image for grid processing
     down_img = rot_img.resize((nw, nh), Image.Resampling.LANCZOS)
     down_arr = np.array(down_img)
 
     # 1. Detect Star Points on full resolution for maximum roundness and precision
-    r_full = rot_arr[:, :, 0].astype(int)
-    g_full = rot_arr[:, :, 1].astype(int)
-    b_full = rot_arr[:, :, 2].astype(int)
+    r_full = rot_arr[:, :, 0].astype(float)
+    g_full = rot_arr[:, :, 1].astype(float)
+    b_full = rot_arr[:, :, 2].astype(float)
     lum_full = 0.299 * r_full + 0.587 * g_full + 0.114 * b_full
 
     date_lim_full = int(50 * H_orig / 472)
@@ -148,7 +149,7 @@ def main():
     sky_mask_full = np.zeros((H_orig, W_orig), dtype=bool)
     sky_mask_full[date_lim_full:mag_lim_full, :] = True
 
-    star_cand = sky_mask_full & (lum_full > 170) & (r_full > 130) & (g_full > 130)
+    star_cand = sky_mask_full & (lum_full > 165) & (r_full > 120) & (g_full > 120)
     lbl, num = ndi.label(star_cand)
     sizes = ndi.sum(star_cand, lbl, range(1, num + 1))
     coms = ndi.center_of_mass(star_cand, lbl, range(1, num + 1))
@@ -163,7 +164,7 @@ def main():
         h_box = ys.max() - ys.min() + 1
         w_box = xs.max() - xs.min() + 1
         aspect = w_box / max(h_box, 1)
-        if 0.35 <= aspect <= 2.8 and max(h_box, w_box) <= 25:
+        if 0.35 <= aspect <= 2.8 and max(h_box, w_box) <= 28:
             cy, cx = coms[i - 1]
             rad_px = max(np.sqrt(sz / np.pi), 0.8)
             rad_mm = max(rad_px * scale, 0.55)
@@ -173,10 +174,10 @@ def main():
 
     print(f"Detected {len(stars)} prominent round star points")
 
-    # 2. Detect Feature Masks for Index/Date lines and Constellation lines
-    r_down = down_arr[:, :, 0].astype(int)
-    g_down = down_arr[:, :, 1].astype(int)
-    b_down = down_arr[:, :, 2].astype(int)
+    # 2. Feature Masks for Index/Date lines and Constellation lines on the downsampled grid
+    r_down = down_arr[:, :, 0].astype(float)
+    g_down = down_arr[:, :, 1].astype(float)
+    b_down = down_arr[:, :, 2].astype(float)
     lum_down = 0.299 * r_down + 0.587 * g_down + 0.114 * b_down
 
     date_lim_down = int(50 * nh / H_orig)
@@ -188,28 +189,34 @@ def main():
     # Date marks at the bottom (y < date_lim_down -> Z near 0)
     # Magnitude scale at the top (y >= mag_lim_down -> Z near H_cyl)
     ruler_mask = np.zeros((nh, nw), dtype=bool)
-    ruler_mask[:date_lim_down, :] = (lum_down[:date_lim_down, :] > 60)
-    ruler_mask[mag_lim_down:, :] = (lum_down[mag_lim_down:, :] > 60)
+    ruler_mask[:date_lim_down, :] = (lum_down[:date_lim_down, :] > 55)
+    ruler_mask[mag_lim_down:, :] = (lum_down[mag_lim_down:, :] > 55)
 
     # Coordinate grid lines
     grid_v = np.zeros((nh, nw), dtype=bool)
     for x_c_orig in [7, 36, 56, 83, 111, 138, 166, 194, 222, 250, 277, 305, 333, 360, 388, 416, 443, 471, 498, 526, 553, 581, 609, 636, 664, 691, 719, 746]:
         xg = int(round(float(x_c_orig) * nw / W_orig))
         if 0 <= xg < nw:
-            grid_v[date_lim_down:mag_lim_down, max(0, xg - 1):min(nw, xg + 2)] = (lum_down[date_lim_down:mag_lim_down, max(0, xg - 1):min(nw, xg + 2)] > 45)
+            grid_v[date_lim_down:mag_lim_down, max(0, xg - 1):min(nw, xg + 2)] = (lum_down[date_lim_down:mag_lim_down, max(0, xg - 1):min(nw, xg + 2)] > 40)
 
     grid_h_lines = np.zeros((nh, nw), dtype=bool)
     for y_c_orig in [61, 92, 123, 154, 186, 217, 249, 280, 311, 343, 374, 405]:
         yg = int(round(float(y_c_orig) * nh / H_orig))
         if date_lim_down <= yg < mag_lim_down:
-            grid_h_lines[max(0, yg - 1):min(nh, yg + 2), :] = (lum_down[max(0, yg - 1):min(nh, yg + 2), :] > 45)
+            grid_h_lines[max(0, yg - 1):min(nh, yg + 2), :] = (lum_down[max(0, yg - 1):min(nh, yg + 2)] > 40)
 
-    index_mask = ruler_mask | (sky_mask_down & (grid_v | grid_h_lines) & (lum_down > 45))
-    lines_mask = sky_mask_down & ~index_mask & (lum_down > 40) & (lum_down <= 170) & (b_down > r_down + 15)
+    index_mask = ruler_mask | (sky_mask_down & (grid_v | grid_h_lines) & (lum_down > 40))
+    lines_mask = sky_mask_down & ~index_mask & (lum_down > 35) & (lum_down <= 175) & (b_down > r_down + 8)
 
-    print(f"Features classified: {np.sum(index_mask)} index cells, {np.sum(lines_mask)} constellation line cells")
+    print(f"Classified features: {np.sum(index_mask)} index/ruler cells, {np.sum(lines_mask)} constellation line cells")
 
-    # 3. Generate STEP AP214 Assembly
+    # Normalized luminance grid for Lithophane wall modulation
+    lum_min = np.percentile(lum_down, 2)
+    lum_max = np.percentile(lum_down, 98)
+    lum_range = max(lum_max - lum_min, 1.0)
+    norm_bri = np.clip((lum_down - lum_min) / lum_range, 0.0, 1.0)
+
+    # 3. Generate STEP AP214/AP242 Assembly Structure
     step_lines = []
     entity_id = 100
 
@@ -268,9 +275,9 @@ def main():
         return style_id
 
     style_bg = make_color('navy', hex_to_rgb(args.color_bg))
-    style_stars = make_color('white', hex_to_rgb(args.color_stars))
-    style_index = make_color('cyan', hex_to_rgb(args.color_index))
+    style_stars = make_color('gold', hex_to_rgb(args.color_stars))
     style_lines = make_color('blue', hex_to_rgb(args.color_lines))
+    style_index = make_color('cyan', hex_to_rgb(args.color_index))
 
     # Root Assembly Product
     root_prod = alloc_id()
@@ -288,7 +295,9 @@ def main():
     step_lines.append(f"#{root_sdr} = SHAPE_DEFINITION_REPRESENTATION(#{root_pshp},#{root_rep});\n")
     step_lines.append(f"#{alloc_id()} = PRODUCT_RELATED_PRODUCT_CATEGORY('assembly',$,(#{root_prod}));\n")
 
-    def register_component(name, brep_id, style_id):
+    def register_component(name, brep_ids, style_id):
+        if not isinstance(brep_ids, list):
+            brep_ids = [brep_ids]
         prod_id = alloc_id()
         form_id = alloc_id()
         pdef_id = alloc_id()
@@ -300,13 +309,20 @@ def main():
         step_lines.append(f"#{form_id} = PRODUCT_DEFINITION_FORMATION('','',#{prod_id});\n")
         step_lines.append(f"#{pdef_id} = PRODUCT_DEFINITION('design','',#{form_id},#{pdef_context});\n")
         step_lines.append(f"#{pshp_id} = PRODUCT_DEFINITION_SHAPE('','',#{pdef_id});\n")
-        step_lines.append(f"#{rep_id} = SHAPE_REPRESENTATION('{name}',({axis_placement},#{brep_id}),#{geom_context});\n")
+        
+        brep_items = ','.join(f"#{b}" for b in brep_ids)
+        step_lines.append(f"#{rep_id} = SHAPE_REPRESENTATION('{name}',({axis_placement},{brep_items}),#{geom_context});\n")
         step_lines.append(f"#{sdr_id} = SHAPE_DEFINITION_REPRESENTATION(#{pshp_id},#{rep_id});\n")
         step_lines.append(f"#{alloc_id()} = PRODUCT_RELATED_PRODUCT_CATEGORY('part',$,(#{prod_id}));\n")
 
-        styled_id = alloc_id()
-        step_lines.append(f"#{styled_id} = STYLED_ITEM('color',({style_id}),#{brep_id});\n")
-        step_lines.append(f"#{alloc_id()} = MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION('',({styled_id}),#{geom_context});\n")
+        styled_ids = []
+        for b in brep_ids:
+            styled_id = alloc_id()
+            step_lines.append(f"#{styled_id} = STYLED_ITEM('color',({style_id}),#{b});\n")
+            styled_ids.append(styled_id)
+        
+        styled_items = ','.join(f"#{s}" for s in styled_ids)
+        step_lines.append(f"#{alloc_id()} = MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION('',({styled_items}),#{geom_context});\n")
 
         nauo_id = alloc_id()
         rel_pshp_id = alloc_id()
@@ -321,14 +337,25 @@ def main():
         step_lines.append(f"#{trans_id} = ITEM_DEFINED_TRANSFORMATION('','',#{axis_placement},#{axis_placement});\n")
 
     def add_plane(pt, norm, tang):
+        nl = np.linalg.norm(norm)
+        n = norm / nl if nl > 1e-9 else np.array([0., 0., 1.])
+        # Orthonormalize tang against norm:
+        t = tang - np.dot(tang, n) * n
+        tl = np.linalg.norm(t)
+        if tl < 1e-9:
+            # Pick arbitrary vector not parallel to n
+            arb = np.array([1., 0., 0.]) if abs(n[0]) < 0.9 else np.array([0., 1., 0.])
+            t = arb - np.dot(arb, n) * n
+            tl = np.linalg.norm(t)
+        t = t / tl
         pid = alloc_id()
         dz = alloc_id()
         dx = alloc_id()
         ax = alloc_id()
         pl = alloc_id()
         step_lines.append(f"#{pid} = CARTESIAN_POINT('',({pt[0]:.4f},{pt[1]:.4f},{pt[2]:.4f}));\n")
-        step_lines.append(f"#{dz} = DIRECTION('',({norm[0]:.4f},{norm[1]:.4f},{norm[2]:.4f}));\n")
-        step_lines.append(f"#{dx} = DIRECTION('',({tang[0]:.4f},{tang[1]:.4f},{tang[2]:.4f}));\n")
+        step_lines.append(f"#{dz} = DIRECTION('',({n[0]:.4f},{n[1]:.4f},{n[2]:.4f}));\n")
+        step_lines.append(f"#{dx} = DIRECTION('',({t[0]:.4f},{t[1]:.4f},{t[2]:.4f}));\n")
         step_lines.append(f"#{ax} = AXIS2_PLACEMENT_3D('',#{pid},#{dz},#{dx});\n")
         step_lines.append(f"#{pl} = PLANE('',#{ax});\n")
         return pl
@@ -351,63 +378,133 @@ def main():
         step_lines.append(f"#{fid} = FACE_SURFACE('',(#{bid}),#{pl},.T.);\n")
         return fid
 
-    def make_poly_face(v_ids, pl_id):
-        lid = alloc_id()
-        bid = alloc_id()
-        fid = alloc_id()
-        refs = ','.join(f"#{v}" for v in v_ids)
-        step_lines.append(f"#{lid} = POLY_LOOP('',({refs}));\n")
-        step_lines.append(f"#{bid} = FACE_OUTER_BOUND('',#{lid},.T.);\n")
-        step_lines.append(f"#{fid} = FACE_SURFACE('',(#{bid}),#{pl_id},.T.);\n")
-        return fid
-
-    # Component 1: Space_Background
-    print("Generating Space_Background solid...")
-    n_bg = nw
-    bg_pts = {}
+    # =========================================================================
+    # Component 1: Space_Background (Full Lithophane Hollow Cylinder Tube)
+    # Outer radius is smooth at R_outer.
+    # Inner radius varies with brightness: bright -> thin wall, dark -> thick wall.
+    # =========================================================================
+    print("Generating Space_Background solid (Lithophane)...")
     bg_faces = []
-    z_levels = [-base_flange, 0.0, H_cyl]
-    r_flange = R_base + 1.0
+    r_in_grid = np.zeros((nh + 1, nw))
+    for j in range(nh):
+        for i in range(nw):
+            b = norm_bri[j, i]
+            w = max_wall - b * (max_wall - min_wall)
+            r_in_grid[j, i] = R_outer - w
+    r_in_grid[nh, :] = r_in_grid[nh - 1, :]
 
-    bg_pl_out = {}
-    bg_pl_in = {}
-    bg_pl_flange = {}
-    for ti in range(n_bg):
-        th0 = (ti / n_bg) * 2 * math.pi
-        th1 = ((ti + 1) / n_bg) * 2 * math.pi
-        thm = (th0 + th1) / 2.0
-        bg_pl_out[ti] = add_plane((R_base*math.cos(th0), R_base*math.sin(th0), 0.0), (math.cos(thm), math.sin(thm), 0.0), (-math.sin(thm), math.cos(thm), 0.0))
-        bg_pl_in[ti] = add_plane((R_in*math.cos(th0), R_in*math.sin(th0), 0.0), (-math.cos(thm), -math.sin(thm), 0.0), (math.sin(thm), -math.cos(thm), 0.0))
-        bg_pl_flange[ti] = add_plane((r_flange*math.cos(th0), r_flange*math.sin(th0), 0.0), (math.cos(thm), math.sin(thm), 0.0), (-math.sin(thm), math.cos(thm), 0.0))
+    bg_out_pts = {}
+    bg_in_pts = {}
+    for j in range(nh + 1):
+        z = (j / nh) * H_cyl
+        for i in range(nw):
+            th = (i / nw) * 2 * math.pi
+            r_in = r_in_grid[j, i]
+            pid_o = alloc_id()
+            step_lines.append(f"#{pid_o} = CARTESIAN_POINT('',({R_outer*math.cos(th):.4f},{R_outer*math.sin(th):.4f},{z:.4f}));\n")
+            bg_out_pts[(i, j)] = pid_o
 
-    bg_pl_top = add_plane((0., 0., H_cyl), (0., 0., 1.), (1., 0., 0.))
-    bg_pl_bot = add_plane((0., 0., -base_flange), (0., 0., -1.), (1., 0., 0.))
+            pid_i = alloc_id()
+            step_lines.append(f"#{pid_i} = CARTESIAN_POINT('',({r_in*math.cos(th):.4f},{r_in*math.sin(th):.4f},{z:.4f}));\n")
+            bg_in_pts[(i, j)] = pid_i
 
-    def get_bg_pt(ti, zi, is_out):
-        key = (ti % n_bg, zi, is_out)
-        if key in bg_pts:
-            return bg_pts[key]
-        th = (ti / n_bg) * 2 * math.pi
-        z = z_levels[zi]
-        if zi == 0:
-            r = r_flange if is_out else R_in
-        elif zi == 1:
-            r = R_base if is_out else R_in
-        else:
-            r = R_base if is_out else R_in
-        pid = alloc_id()
-        bg_pts[key] = pid
-        step_lines.append(f"#{pid} = CARTESIAN_POINT('',({r*math.cos(th):.4f},{r*math.sin(th):.4f},{z:.4f}));\n")
-        return pid
+    def get_bg_out_coord(i, j):
+        th = (i / nw) * 2 * math.pi
+        z = (j / nh) * H_cyl
+        return np.array([R_outer * math.cos(th), R_outer * math.sin(th), z])
 
-    for ti in range(n_bg):
-        t_next = (ti + 1) % n_bg
-        bg_faces.append(make_poly_face([get_bg_pt(ti, 1, True), get_bg_pt(t_next, 1, True), get_bg_pt(t_next, 2, True), get_bg_pt(ti, 2, True)], bg_pl_out[ti]))
-        bg_faces.append(make_poly_face([get_bg_pt(ti, 1, False), get_bg_pt(ti, 2, False), get_bg_pt(t_next, 2, False), get_bg_pt(t_next, 1, False)], bg_pl_in[ti]))
-        bg_faces.append(make_poly_face([get_bg_pt(ti, 2, False), get_bg_pt(t_next, 2, False), get_bg_pt(t_next, 2, True), get_bg_pt(ti, 2, True)], bg_pl_top))
-        bg_faces.append(make_poly_face([get_bg_pt(ti, 0, True), get_bg_pt(t_next, 0, True), get_bg_pt(t_next, 1, True), get_bg_pt(ti, 1, True)], bg_pl_flange[ti]))
-        bg_faces.append(make_poly_face([get_bg_pt(ti, 0, False), get_bg_pt(ti, 1, False), get_bg_pt(t_next, 1, False), get_bg_pt(t_next, 0, False)], bg_pl_in[ti]))
-        bg_faces.append(make_poly_face([get_bg_pt(ti, 0, False), get_bg_pt(t_next, 0, False), get_bg_pt(t_next, 0, True), get_bg_pt(ti, 0, True)], bg_pl_bot))
+    def get_bg_in_coord(i, j):
+        th = (i / nw) * 2 * math.pi
+        z = (j / nh) * H_cyl
+        r_in = r_in_grid[j, i % nw]
+        return np.array([r_in * math.cos(th), r_in * math.sin(th), z])
+
+    # Outer cylindrical surface (smooth, normal outward)
+    for j in range(nh):
+        for i in range(nw):
+            i_next = (i + 1) % nw
+            p00 = get_bg_out_coord(i, j); p10 = get_bg_out_coord(i_next, j)
+            p11 = get_bg_out_coord(i_next, j + 1); p01 = get_bg_out_coord(i, j + 1)
+            v00 = bg_out_pts[(i, j)]; v10 = bg_out_pts[(i_next, j)]
+            v11 = bg_out_pts[(i_next, j + 1)]; v01 = bg_out_pts[(i, j + 1)]
+            bg_faces.append(make_tri_with_pts([v00, v10, v11], p00, p10, p11))
+            bg_faces.append(make_tri_with_pts([v00, v11, v01], p00, p11, p01))
+
+    # Inner lithophane surface (variable radius, normal inward)
+    for j in range(nh):
+        for i in range(nw):
+            i_next = (i + 1) % nw
+            p00 = get_bg_in_coord(i, j); p10 = get_bg_in_coord(i_next, j)
+            p11 = get_bg_in_coord(i_next, j + 1); p01 = get_bg_in_coord(i, j + 1)
+            v00 = bg_in_pts[(i, j)]; v10 = bg_in_pts[(i_next, j)]
+            v11 = bg_in_pts[(i_next, j + 1)]; v01 = bg_in_pts[(i, j + 1)]
+            bg_faces.append(make_tri_with_pts([v00, v11, v10], p00, p11, p10))
+            bg_faces.append(make_tri_with_pts([v00, v01, v11], p00, p01, p11))
+
+    # Top ring cap (z = H_cyl)
+    for i in range(nw):
+        i_next = (i + 1) % nw
+        o0 = get_bg_out_coord(i, nh); o1 = get_bg_out_coord(i_next, nh)
+        in0 = get_bg_in_coord(i, nh); in1 = get_bg_in_coord(i_next, nh)
+        vo0 = bg_out_pts[(i, nh)]; vo1 = bg_out_pts[(i_next, nh)]
+        vi0 = bg_in_pts[(i, nh)]; vi1 = bg_in_pts[(i_next, nh)]
+        bg_faces.append(make_tri_with_pts([vo0, vo1, vi1], o0, o1, in1))
+        bg_faces.append(make_tri_with_pts([vo0, vi1, vi0], o0, in1, in0))
+
+    # Bottom flange or bottom ring cap (z <= 0)
+    if base_flange > 0:
+        r_flange = R_outer + 1.2
+        r_in_bot = R_outer - max_wall
+        flange_out_pts = {}
+        flange_in_pts = {}
+        for i in range(nw):
+            th = (i / nw) * 2 * math.pi
+            pid_fo = alloc_id()
+            step_lines.append(f"#{pid_fo} = CARTESIAN_POINT('',({r_flange*math.cos(th):.4f},{r_flange*math.sin(th):.4f},{-base_flange:.4f}));\n")
+            flange_out_pts[i] = pid_fo
+
+            pid_fi = alloc_id()
+            step_lines.append(f"#{pid_fi} = CARTESIAN_POINT('',({r_in_bot*math.cos(th):.4f},{r_in_bot*math.sin(th):.4f},{-base_flange:.4f}));\n")
+            flange_in_pts[i] = pid_fi
+
+        def get_flange_out(i):
+            th = (i / nw) * 2 * math.pi
+            return np.array([r_flange * math.cos(th), r_flange * math.sin(th), -base_flange])
+
+        def get_flange_in(i):
+            th = (i / nw) * 2 * math.pi
+            return np.array([r_in_bot * math.cos(th), r_in_bot * math.sin(th), -base_flange])
+
+        for i in range(nw):
+            i_next = (i + 1) % nw
+            vo0 = bg_out_pts[(i, 0)]; vo1 = bg_out_pts[(i_next, 0)]
+            vi0 = bg_in_pts[(i, 0)]; vi1 = bg_in_pts[(i_next, 0)]
+            vfo0 = flange_out_pts[i]; vfo1 = flange_out_pts[i_next]
+            vfi0 = flange_in_pts[i]; vfi1 = flange_in_pts[i_next]
+
+            p_o0 = get_bg_out_coord(i, 0); p_o1 = get_bg_out_coord(i_next, 0)
+            p_i0 = get_bg_in_coord(i, 0); p_i1 = get_bg_in_coord(i_next, 0)
+            p_fo0 = get_flange_out(i); p_fo1 = get_flange_out(i_next)
+            p_fi0 = get_flange_in(i); p_fi1 = get_flange_in(i_next)
+
+            # Flange outer wall
+            bg_faces.append(make_tri_with_pts([vo0, vfo0, vfo1], p_o0, p_fo0, p_fo1))
+            bg_faces.append(make_tri_with_pts([vo0, vfo1, vo1], p_o0, p_fo1, p_o1))
+            # Flange bottom ring
+            bg_faces.append(make_tri_with_pts([vfo0, vfi0, vfi1], p_fo0, p_fi0, p_fi1))
+            bg_faces.append(make_tri_with_pts([vfo0, vfi1, vfo1], p_fo0, p_fi1, p_fo1))
+            # Flange inner wall connecting up to z=0
+            bg_faces.append(make_tri_with_pts([vfi0, vi0, vi1], p_fi0, p_i0, p_i1))
+            bg_faces.append(make_tri_with_pts([vfi0, vi1, vfi1], p_fi0, p_i1, p_fi1))
+    else:
+        for i in range(nw):
+            i_next = (i + 1) % nw
+            o0 = get_bg_out_coord(i, 0); o1 = get_bg_out_coord(i_next, 0)
+            in0 = get_bg_in_coord(i, 0); in1 = get_bg_in_coord(i_next, 0)
+            vo0 = bg_out_pts[(i, 0)]; vo1 = bg_out_pts[(i_next, 0)]
+            vi0 = bg_in_pts[(i, 0)]; vi1 = bg_in_pts[(i_next, 0)]
+            bg_faces.append(make_tri_with_pts([vo0, vi1, vo1], o0, in1, o1))
+            bg_faces.append(make_tri_with_pts([vo0, vi0, vi1], o0, in0, in1))
 
     bg_shell = alloc_id()
     bg_brep = alloc_id()
@@ -416,12 +513,18 @@ def main():
     step_lines.append(f"#{bg_brep} = FACETED_BREP('Space_Background_Brep',#{bg_shell});\n")
     register_component('Space_Background', bg_brep, style_bg)
 
-    # Component 2: Stars (Watertight circular dots with shared vertices)
-    print("Generating Stars solid...")
-    star_faces = []
-    n_star_sides = 8
-    r_star_top = R_base + relief_stars
-    r_star_bot = R_sub
+    # =========================================================================
+    # Component 2: Stars (Watertight circular prisms, yellow filament)
+    # Each star is its own CLOSED_SHELL and FACETED_BREP (ISO 10303-42 compliant).
+    # All stars are collected under the 'Stars' SHAPE_REPRESENTATION.
+    # Outer face is flush with R_outer + 0.02mm (zero relief, smooth!).
+    # Inner face reaches through the lithophane wall to R_outer - min_wall.
+    # =========================================================================
+    print("Generating Stars solid (Watertight circular dots)...")
+    n_star_sides = 12
+    r_star_top = R_outer + relief + 0.020
+    r_star_bot = R_outer - min_wall
+    star_brep_ids = []
 
     for s_idx, (th_c, z_c, r_star) in enumerate(stars):
         c_top_pt = (r_star_top * math.cos(th_c), r_star_top * math.sin(th_c), z_c)
@@ -439,7 +542,7 @@ def main():
             ang = (k / n_star_sides) * 2.0 * math.pi
             ds = r_star * math.cos(ang)
             dz = r_star * math.sin(ang)
-            th_k = th_c + (ds / R_base)
+            th_k = th_c + (ds / R_outer)
             zk = z_c + dz
             pt_t = (r_star_top * math.cos(th_k), r_star_top * math.sin(th_k), zk)
             pt_b = (r_star_bot * math.cos(th_k), r_star_bot * math.sin(th_k), zk)
@@ -454,104 +557,114 @@ def main():
             step_lines.append(f"#{pid_b} = CARTESIAN_POINT('',({pt_b[0]:.4f},{pt_b[1]:.4f},{pt_b[2]:.4f}));\n")
             bot_pids.append(pid_b)
 
+        this_star_faces = []
         for k in range(n_star_sides):
             kn = (k + 1) % n_star_sides
-            star_faces.append(make_tri_with_pts([pid_ct, top_pids[k], top_pids[kn]], np.array(c_top_pt), np.array(top_coords[k]), np.array(top_coords[kn])))
-            star_faces.append(make_tri_with_pts([pid_cb, bot_pids[kn], bot_pids[k]], np.array(c_bot_pt), np.array(bot_coords[kn]), np.array(bot_coords[k])))
+            this_star_faces.append(make_tri_with_pts([pid_ct, top_pids[k], top_pids[kn]], np.array(c_top_pt), np.array(top_coords[k]), np.array(top_coords[kn])))
+            this_star_faces.append(make_tri_with_pts([pid_cb, bot_pids[kn], bot_pids[k]], np.array(c_bot_pt), np.array(bot_coords[kn]), np.array(bot_coords[k])))
             p0 = np.array(bot_coords[k]); p1 = np.array(bot_coords[kn]); p2 = np.array(top_coords[kn])
-            d1 = p1 - p0; d2 = p2 - p0; n = np.cross(d1, d2); n = n / np.linalg.norm(n); t = d1 / np.linalg.norm(d1)
-            pl = add_plane(p0, n, t)
-            star_faces.append(make_poly_face([bot_pids[k], bot_pids[kn], top_pids[kn], top_pids[k]], pl))
+            this_star_faces.append(make_tri_with_pts([bot_pids[k], bot_pids[kn], top_pids[kn]], p0, p1, p2))
+            p3 = np.array(top_coords[k])
+            this_star_faces.append(make_tri_with_pts([bot_pids[k], top_pids[kn], top_pids[k]], p0, p2, p3))
 
-    star_shell = alloc_id()
-    star_brep = alloc_id()
-    refs_stars = ','.join(f"#{f}" for f in star_faces)
-    step_lines.append(f"#{star_shell} = CLOSED_SHELL('',({refs_stars}));\n")
-    step_lines.append(f"#{star_brep} = FACETED_BREP('Stars_Brep',#{star_shell});\n")
-    register_component('Stars', star_brep, style_stars)
+        shell_id = alloc_id()
+        brep_id = alloc_id()
+        refs_star = ','.join(f"#{f}" for f in this_star_faces)
+        step_lines.append(f"#{shell_id} = CLOSED_SHELL('',({refs_star}));\n")
+        step_lines.append(f"#{brep_id} = FACETED_BREP('Star_{s_idx}',#{shell_id});\n")
+        star_brep_ids.append(brep_id)
 
-    # Components 3 & 4: Manifold Relief for Index_Lines and Constellation_Lines
-    def build_relief_component(name, mask, r_raised, style_id):
-        print(f"Generating {name} solid...")
-        r_grid = np.full((nh + 1, nw), R_floor)
+    register_component('Stars', star_brep_ids, style_stars)
+
+    # =========================================================================
+    # Components 3 & 4: Inlaid Watertight Shells for Constellation_Lines & Index_Lines
+    # Active cells: outer radius is flush at R_outer + delta (smooth, zero relief).
+    # Inactive cells: recessed beneath the surface (hidden inside the background wall).
+    # =========================================================================
+    def build_inlaid_component(name, mask, delta_surf, style_id):
+        print(f"Generating {name} solid (Inlaid shell)...")
+        r_out_active = R_outer + relief + delta_surf
+        r_in_active = R_outer - 0.50
+        r_out_inactive = R_outer - 0.15
+        r_in_inactive = R_outer - 0.25
+
+        r_grid_out = np.full((nh + 1, nw), r_out_inactive)
+        r_grid_in = np.full((nh + 1, nw), r_in_inactive)
         for j in range(nh):
             for i in range(nw):
                 if mask[j, i]:
-                    r_grid[j, i] = r_raised
-        r_grid[nh, :] = r_grid[nh - 1, :]
+                    r_grid_out[j, i] = r_out_active
+                    r_grid_in[j, i] = r_in_active
+        r_grid_out[nh, :] = r_grid_out[nh - 1, :]
+        r_grid_in[nh, :] = r_grid_in[nh - 1, :]
 
         out_pts = {}
+        in_pts = {}
         for j in range(nh + 1):
             z = (j / nh) * H_cyl
             for i in range(nw):
                 th = (i / nw) * 2 * math.pi
-                r_o = r_grid[j, i]
+                ro = r_grid_out[j, i]
+                ri = r_grid_in[j, i]
+
                 pid_o = alloc_id()
                 out_pts[(i, j)] = pid_o
-                step_lines.append(f"#{pid_o} = CARTESIAN_POINT('',({r_o*math.cos(th):.4f},{r_o*math.sin(th):.4f},{z:.4f}));\n")
+                step_lines.append(f"#{pid_o} = CARTESIAN_POINT('',({ro*math.cos(th):.4f},{ro*math.sin(th):.4f},{z:.4f}));\n")
 
-        in_bot_pts = {}
-        in_top_pts = {}
-        for i in range(nw):
-            th = (i / nw) * 2 * math.pi
-            pid_b = alloc_id()
-            in_bot_pts[i] = pid_b
-            step_lines.append(f"#{pid_b} = CARTESIAN_POINT('',({R_sub*math.cos(th):.4f},{R_sub*math.sin(th):.4f},0.0));\n")
-            pid_t = alloc_id()
-            in_top_pts[i] = pid_t
-            step_lines.append(f"#{pid_t} = CARTESIAN_POINT('',({R_sub*math.cos(th):.4f},{R_sub*math.sin(th):.4f},{H_cyl:.4f}));\n")
+                pid_i = alloc_id()
+                in_pts[(i, j)] = pid_i
+                step_lines.append(f"#{pid_i} = CARTESIAN_POINT('',({ri*math.cos(th):.4f},{ri*math.sin(th):.4f},{z:.4f}));\n")
 
-        def get_out_coord(i, j):
+        def get_out_c(i, j):
             th = (i / nw) * 2 * math.pi
             z = (j / nh) * H_cyl
-            r_o = r_grid[j, i % nw]
-            return np.array([r_o * math.cos(th), r_o * math.sin(th), z])
+            ro = r_grid_out[j, i % nw]
+            return np.array([ro * math.cos(th), ro * math.sin(th), z])
 
-        def get_in_bot(i):
+        def get_in_c(i, j):
             th = (i / nw) * 2 * math.pi
-            return np.array([R_sub * math.cos(th), R_sub * math.sin(th), 0.0])
-
-        def get_in_top(i):
-            th = (i / nw) * 2 * math.pi
-            return np.array([R_sub * math.cos(th), R_sub * math.sin(th), H_cyl])
+            z = (j / nh) * H_cyl
+            ri = r_grid_in[j, i % nw]
+            return np.array([ri * math.cos(th), ri * math.sin(th), z])
 
         faces = []
         for j in range(nh):
             for i in range(nw):
                 i_next = (i + 1) % nw
-                p00 = get_out_coord(i, j); p10 = get_out_coord(i_next, j)
-                p11 = get_out_coord(i_next, j + 1); p01 = get_out_coord(i, j + 1)
+                p00 = get_out_c(i, j); p10 = get_out_c(i_next, j)
+                p11 = get_out_c(i_next, j + 1); p01 = get_out_c(i, j + 1)
                 v00 = out_pts[(i, j)]; v10 = out_pts[(i_next, j)]
                 v11 = out_pts[(i_next, j + 1)]; v01 = out_pts[(i, j + 1)]
                 faces.append(make_tri_with_pts([v00, v10, v11], p00, p10, p11))
                 faces.append(make_tri_with_pts([v00, v11, v01], p00, p11, p01))
 
-        for i in range(nw):
-            i_next = (i + 1) % nw
-            b0 = get_in_bot(i); b1 = get_in_bot(i_next)
-            t0 = get_in_top(i); t1 = get_in_top(i_next)
-            vb0 = in_bot_pts[i]; vb1 = in_bot_pts[i_next]
-            vt0 = in_top_pts[i]; vt1 = in_top_pts[i_next]
-            faces.append(make_tri_with_pts([vb0, vt1, vb1], b0, t1, b1))
-            faces.append(make_tri_with_pts([vb0, vt0, vt1], b0, t0, t1))
+        for j in range(nh):
+            for i in range(nw):
+                i_next = (i + 1) % nw
+                p00 = get_in_c(i, j); p10 = get_in_c(i_next, j)
+                p11 = get_in_c(i_next, j + 1); p01 = get_in_c(i, j + 1)
+                v00 = in_pts[(i, j)]; v10 = in_pts[(i_next, j)]
+                v11 = in_pts[(i_next, j + 1)]; v01 = in_pts[(i, j + 1)]
+                faces.append(make_tri_with_pts([v00, v11, v10], p00, p11, p10))
+                faces.append(make_tri_with_pts([v00, v01, v11], p00, p01, p11))
 
         for i in range(nw):
             i_next = (i + 1) % nw
-            o0 = get_out_coord(i, 0); o1 = get_out_coord(i_next, 0)
-            in0 = get_in_bot(i); in1 = get_in_bot(i_next)
+            o0 = get_out_c(i, 0); o1 = get_out_c(i_next, 0)
+            in0 = get_in_c(i, 0); in1 = get_in_c(i_next, 0)
             vo0 = out_pts[(i, 0)]; vo1 = out_pts[(i_next, 0)]
-            vi0 = in_bot_pts[i]; vi1 = in_bot_pts[i_next]
-            faces.append(make_tri_with_pts([vo0, vi0, vi1], o0, in0, in1))
+            vi0 = in_pts[(i, 0)]; vi1 = in_pts[(i_next, 0)]
             faces.append(make_tri_with_pts([vo0, vi1, vo1], o0, in1, o1))
+            faces.append(make_tri_with_pts([vo0, vi0, vi1], o0, in0, in1))
 
         for i in range(nw):
             i_next = (i + 1) % nw
-            o0 = get_out_coord(i, nh); o1 = get_out_coord(i_next, nh)
-            in0 = get_in_top(i); in1 = get_in_top(i_next)
+            o0 = get_out_c(i, nh); o1 = get_out_c(i_next, nh)
+            in0 = get_in_c(i, nh); in1 = get_in_c(i_next, nh)
             vo0 = out_pts[(i, nh)]; vo1 = out_pts[(i_next, nh)]
-            vi0 = in_top_pts[i]; vi1 = in_top_pts[i_next]
-            faces.append(make_tri_with_pts([vo0, vi1, vi0], o0, in1, in0))
+            vi0 = in_pts[(i, nh)]; vi1 = in_pts[(i_next, nh)]
             faces.append(make_tri_with_pts([vo0, vo1, vi1], o0, o1, in1))
+            faces.append(make_tri_with_pts([vo0, vi1, vi0], o0, in1, in0))
 
         shell_id = alloc_id()
         brep_id = alloc_id()
@@ -560,13 +673,13 @@ def main():
         step_lines.append(f"#{brep_id} = FACETED_BREP('{name}_Brep',#{shell_id});\n")
         register_component(name, brep_id, style_id)
 
-    build_relief_component('Index_Lines', index_mask, R_base + relief_index, style_index)
-    build_relief_component('Constellation_Lines', lines_mask, R_base + relief_lines, style_lines)
+    build_inlaid_component('Constellation_Lines', lines_mask, 0.010, style_lines)
+    build_inlaid_component('Index_Lines', index_mask, 0.015, style_index)
 
     output_path = args.output
     header_str = (
         f"ISO-10303-21;\nHEADER;\n"
-        f"FILE_DESCRIPTION(('Cylindrical Multicolor Star Map Assembly'),'2;1');\n"
+        f"FILE_DESCRIPTION(('Cylindrical Multicolor Lithophane Star Map Assembly'),'2;1');\n"
         f"FILE_NAME('{os.path.basename(output_path)}','{time.strftime('%Y-%m-%dT%H:%M:%S')}',('User'),('User'),'Processor','System','');\n"
         f"FILE_SCHEMA(('AUTOMOTIVE_DESIGN {{ 1 0 10303 214 1 1 1 1 }}'));\n"
         f"ENDSEC;\nDATA;\n"
@@ -579,7 +692,11 @@ def main():
         f.write("ENDSEC;\nEND-ISO-10303-21;\n")
 
     sz_mb = os.path.getsize(output_path) / (1024 * 1024)
-    print(f"Successfully generated {output_path} ({sz_mb:.2f} MB)")
+    print(f"\n=== COMPLETE ===")
+    print(f"Output: {output_path} ({sz_mb:.2f} MB)")
+    print(f"Components: Space_Background, Stars, Constellation_Lines, Index_Lines")
+    print(f"Lithophane: Smooth exterior (R={R_outer}mm), variable wall {min_wall}-{max_wall}mm")
+    print(f"Ready for OrcaSlicer / Bambu Studio / PrusaSlicer multicolor printing.")
 
 
 if __name__ == '__main__':
