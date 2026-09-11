@@ -122,10 +122,46 @@ function hexToRgb(hexStr) {
     return [((num >> 16) & 255) / 255.0, ((num >> 8) & 255) / 255.0, (num & 255) / 255.0];
 }
 
+// ===== BUFFERED STREAMING WRITER =====
+class BufferedWriter {
+    constructor(filePath, bufferSize = 4 * 1024 * 1024) {
+        this.filePath = filePath;
+        this.fd = fs.openSync(filePath, 'w');
+        this.buffer = Buffer.alloc(bufferSize);
+        this.offset = 0;
+        this.bufferSize = bufferSize;
+    }
+
+    write(str) {
+        const len = Buffer.byteLength(str);
+        if (this.offset + len > this.bufferSize) {
+            this.flush();
+            if (len > this.bufferSize) {
+                fs.writeSync(this.fd, str, undefined, 'utf8');
+                return;
+            }
+        }
+        this.offset += this.buffer.write(str, this.offset, 'utf8');
+    }
+
+    flush() {
+        if (this.offset > 0) {
+            fs.writeSync(this.fd, this.buffer, 0, this.offset);
+            this.offset = 0;
+        }
+    }
+
+    close() {
+        this.flush();
+        fs.closeSync(this.fd);
+    }
+}
+
 // ===== STEP WRITER =====
 class StepAssemblyWriter {
-    constructor() {
-        this.lines = [];
+    constructor(filePath) {
+        this.filePath = filePath;
+        this.writer = new BufferedWriter(filePath);
         this.nextId = 100;
     }
 
@@ -133,11 +169,27 @@ class StepAssemblyWriter {
         return this.nextId++;
     }
 
+    write(s) {
+        this.writer.write(s);
+    }
+
     emit(s) {
-        this.lines.push(s);
+        this.writer.write(s + '\n');
     }
 
     initContexts() {
+        const now = new Date().toISOString().replace(/\.\d+Z$/, '');
+        const headerStr = [
+            'ISO-10303-21;',
+            'HEADER;',
+            "FILE_DESCRIPTION(('Cylindrical Multicolor Lithophane Star Map Assembly'),'2;1');",
+            `FILE_NAME('${path.basename(this.filePath)}','${now}',('User'),('User'),'Processor','System','');`,
+            "FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));",
+            'ENDSEC;',
+            'DATA;'
+        ].join('\n');
+        this.emit(headerStr);
+
         this.appContext = this.allocId();
         this.appProto = this.allocId();
         this.prodContext = this.allocId();
@@ -247,65 +299,83 @@ class StepAssemblyWriter {
         this.emit(`#${transId} = ITEM_DEFINED_TRANSFORMATION('','',#${this.axisPlacement},#${this.axisPlacement});`);
     }
 
-    addPlane(pt, norm, tang) {
-        let nl = Math.sqrt(norm[0] * norm[0] + norm[1] * norm[1] + norm[2] * norm[2]);
-        let n = nl > 1e-9 ? [norm[0] / nl, norm[1] / nl, norm[2] / nl] : [0, 0, 1];
-        let dot = tang[0] * n[0] + tang[1] * n[1] + tang[2] * n[2];
-        let t = [tang[0] - dot * n[0], tang[1] - dot * n[1], tang[2] - dot * n[2]];
-        let tl = Math.sqrt(t[0] * t[0] + t[1] * t[1] + t[2] * t[2]);
-        if (tl < 1e-9) {
-            let arb = Math.abs(n[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
-            let adot = arb[0] * n[0] + arb[1] * n[1] + arb[2] * n[2];
-            t = [arb[0] - adot * n[0], arb[1] - adot * n[1], arb[2] - adot * n[2]];
-            tl = Math.sqrt(t[0] * t[0] + t[1] * t[1] + t[2] * t[2]);
+    emitPoint(x, y, z) {
+        const id = this.allocId();
+        this.emit(`#${id} = CARTESIAN_POINT('',(${x.toFixed(4)},${y.toFixed(4)},${z.toFixed(4)}));`);
+        return id;
+    }
+
+    makeTriFast(v0, v1, v2, x0, y0, z0, x1, y1, z1, x2, y2, z2) {
+        const d1x = x1 - x0, d1y = y1 - y0, d1z = z1 - z0;
+        const d2x = x2 - x0, d2y = y2 - y0, d2z = z2 - z0;
+        let nx = d1y * d2z - d1z * d2y;
+        let ny = d1z * d2x - d1x * d2z;
+        let nz = d1x * d2y - d1y * d2x;
+        const nl = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        if (nl > 1e-9) {
+            nx /= nl; ny /= nl; nz /= nl;
+        } else {
+            nx = 0; ny = 0; nz = 1;
         }
-        t = [t[0] / tl, t[1] / tl, t[2] / tl];
+        const tl = Math.sqrt(d1x * d1x + d1y * d1y + d1z * d1z);
+        let tx = 1, ty = 0, tz = 0;
+        if (tl > 1e-9) {
+            tx = d1x / tl; ty = d1y / tl; tz = d1z / tl;
+        }
 
         const pid = this.allocId();
         const dz = this.allocId();
         const dx = this.allocId();
         const ax = this.allocId();
         const pl = this.allocId();
-        this.emit(`#${pid} = CARTESIAN_POINT('',(${pt[0].toFixed(4)},${pt[1].toFixed(4)},${pt[2].toFixed(4)}));`);
-        this.emit(`#${dz} = DIRECTION('',(${n[0].toFixed(4)},${n[1].toFixed(4)},${n[2].toFixed(4)}));`);
-        this.emit(`#${dx} = DIRECTION('',(${t[0].toFixed(4)},${t[1].toFixed(4)},${t[2].toFixed(4)}));`);
-        this.emit(`#${ax} = AXIS2_PLACEMENT_3D('',#${pid},#${dz},#${dx});`);
-        this.emit(`#${pl} = PLANE('',#${ax});`);
-        return pl;
-    }
-
-    makeTriWithPts(vIds, p0, p1, p2) {
-        const d1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
-        const d2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
-        let n = [
-            d1[1] * d2[2] - d1[2] * d2[1],
-            d1[2] * d2[0] - d1[0] * d2[2],
-            d1[0] * d2[1] - d1[1] * d2[0]
-        ];
-        const nl = Math.sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
-        if (nl > 1e-9) {
-            n = [n[0] / nl, n[1] / nl, n[2] / nl];
-        } else {
-            n = [0, 0, 1];
-        }
-        const tl = Math.sqrt(d1[0] * d1[0] + d1[1] * d1[1] + d1[2] * d1[2]);
-        const t = tl > 1e-9 ? [d1[0] / tl, d1[1] / tl, d1[2] / tl] : [1, 0, 0];
-
-        const pl = this.addPlane(p0, n, t);
         const lid = this.allocId();
         const bid = this.allocId();
         const fid = this.allocId();
-        const refs = `#${vIds[0]},#${vIds[1]},#${vIds[2]}`;
-        this.emit(`#${lid} = POLY_LOOP('',(${refs}));`);
-        this.emit(`#${bid} = FACE_OUTER_BOUND('',#${lid},.T.);`);
-        this.emit(`#${fid} = FACE_SURFACE('',(#${bid}),#${pl},.T.);`);
+
+        this.write(
+            `#${pid} = CARTESIAN_POINT('',(${x0.toFixed(4)},${y0.toFixed(4)},${z0.toFixed(4)}));\n` +
+            `#${dz} = DIRECTION('',(${nx.toFixed(4)},${ny.toFixed(4)},${nz.toFixed(4)}));\n` +
+            `#${dx} = DIRECTION('',(${tx.toFixed(4)},${ty.toFixed(4)},${tz.toFixed(4)}));\n` +
+            `#${ax} = AXIS2_PLACEMENT_3D('',#${pid},#${dz},#${dx});\n` +
+            `#${pl} = PLANE('',#${ax});\n` +
+            `#${lid} = POLY_LOOP('',(#${v0},#${v1},#${v2}));\n` +
+            `#${bid} = FACE_OUTER_BOUND('',#${lid},.T.);\n` +
+            `#${fid} = FACE_SURFACE('',(#${bid}),#${pl},.T.);\n`
+        );
         return fid;
     }
 
-    emitPoint(x, y, z) {
-        const id = this.allocId();
-        this.emit(`#${id} = CARTESIAN_POINT('',(${x.toFixed(4)},${y.toFixed(4)},${z.toFixed(4)}));`);
-        return id;
+    makeTriWithPts(vIds, p0, p1, p2) {
+        return this.makeTriFast(
+            vIds[0], vIds[1], vIds[2],
+            p0[0], p0[1], p0[2],
+            p1[0], p1[1], p1[2],
+            p2[0], p2[1], p2[2]
+        );
+    }
+
+    emitShell(shellId, faceIds, count) {
+        const total = count !== undefined ? count : faceIds.length;
+        this.write(`#${shellId} = CLOSED_SHELL('',(`);
+        let chunk = '';
+        for (let i = 0; i < total; i++) {
+            if (i > 0) chunk += ',';
+            chunk += '#' + faceIds[i];
+            if (chunk.length >= 32768) {
+                this.write(chunk);
+                chunk = '';
+            }
+        }
+        if (chunk.length > 0) {
+            this.write(chunk);
+        }
+        this.write('));\n');
+    }
+
+    close() {
+        this.emit('ENDSEC;');
+        this.emit('END-ISO-10303-21;');
+        this.writer.close();
     }
 }
 
@@ -487,9 +557,23 @@ async function main() {
 
     const normBri = lumGrid.map(row => row.map(v => Math.max(0, Math.min(1, (v - lumMin) / lumRange))));
 
+    // Precompute cylindrical geometry lookup tables
+    const cosTh = new Float64Array(NW);
+    const sinTh = new Float64Array(NW);
+    for (let i = 0; i < NW; i++) {
+        const th = (i / NW) * 2 * Math.PI;
+        cosTh[i] = Math.cos(th);
+        sinTh[i] = Math.sin(th);
+    }
+    const zVals = new Float64Array(NH + 1);
+    for (let j = 0; j <= NH; j++) {
+        zVals[j] = (j / NH) * H_cyl;
+    }
+
     // 3. STEP Assembly Generation
     console.log('\nGenerating STEP assembly...');
-    const sw = new StepAssemblyWriter();
+    console.log(`Streaming directly to ${OUTPUT_FILE}...`);
+    const sw = new StepAssemblyWriter(OUTPUT_FILE);
     sw.initContexts();
 
     const styleBg = sw.makeColor('navy', hexToRgb(COLOR_BG));
@@ -503,130 +587,164 @@ async function main() {
     // Inner radius varies with brightness: bright -> thin wall, dark -> thick wall.
     // =========================================================================
     console.log('Generating Space_Background solid (Lithophane)...');
-    const bgFaces = [];
-    const rInGrid = Array.from({ length: NH + 1 }, (_, j) => {
-        const rowIdx = Math.min(j, NH - 1);
-        return Array.from({ length: NW }, (_, i) => {
-            const b = normBri[rowIdx][i];
-            const w = MAX_WALL - b * (MAX_WALL - MIN_WALL);
-            return OUTER_R - w;
-        });
-    });
-
-    const bgOutPts = {};
-    const bgInPts = {};
+    const rInGrid = new Float32Array((NH + 1) * NW);
     for (let j = 0; j <= NH; j++) {
-        const z = (j / NH) * H_cyl;
+        const rowIdx = Math.min(j, NH - 1);
+        const briRow = normBri[rowIdx];
+        const rowOffset = j * NW;
         for (let i = 0; i < NW; i++) {
-            const th = (i / NW) * 2 * Math.PI;
-            const rIn = rInGrid[j][i];
-            bgOutPts[`${i},${j}`] = sw.emitPoint(OUTER_R * Math.cos(th), OUTER_R * Math.sin(th), z);
-            bgInPts[`${i},${j}`] = sw.emitPoint(rIn * Math.cos(th), rIn * Math.sin(th), z);
+            const b = briRow[i];
+            const w = MAX_WALL - b * (MAX_WALL - MIN_WALL);
+            rInGrid[rowOffset + i] = OUTER_R - w;
         }
     }
 
-    function getBgOutCoord(i, j) {
-        const th = (i / NW) * 2 * Math.PI;
-        const z = (j / NH) * H_cyl;
-        return [OUTER_R * Math.cos(th), OUTER_R * Math.sin(th), z];
+    const bgOutPts = new Int32Array((NH + 1) * NW);
+    const bgInPts = new Int32Array((NH + 1) * NW);
+    for (let j = 0; j <= NH; j++) {
+        const z = zVals[j];
+        const rowOffset = j * NW;
+        for (let i = 0; i < NW; i++) {
+            const rIn = rInGrid[rowOffset + i];
+            bgOutPts[rowOffset + i] = sw.emitPoint(OUTER_R * cosTh[i], OUTER_R * sinTh[i], z);
+            bgInPts[rowOffset + i] = sw.emitPoint(rIn * cosTh[i], rIn * sinTh[i], z);
+        }
     }
-    function getBgInCoord(i, j) {
-        const th = (i / NW) * 2 * Math.PI;
-        const z = (j / NH) * H_cyl;
-        const rIn = rInGrid[j][i % NW];
-        return [rIn * Math.cos(th), rIn * Math.sin(th), z];
-    }
+
+    const totalBgFaces = 4 * NW * NH + (BASE_FLANGE > 0 ? 8 : 4) * NW;
+    const bgFaces = new Int32Array(totalBgFaces);
+    let bgFaceCount = 0;
 
     // Outer surface
     for (let j = 0; j < NH; j++) {
+        const z0 = zVals[j];
+        const z1 = zVals[j + 1];
+        const row0 = j * NW;
+        const row1 = (j + 1) * NW;
         for (let i = 0; i < NW; i++) {
             const iNext = (i + 1) % NW;
-            const p00 = getBgOutCoord(i, j), p10 = getBgOutCoord(iNext, j);
-            const p11 = getBgOutCoord(iNext, j + 1), p01 = getBgOutCoord(i, j + 1);
-            const v00 = bgOutPts[`${i},${j}`], v10 = bgOutPts[`${iNext},${j}`];
-            const v11 = bgOutPts[`${iNext},${j + 1}`], v01 = bgOutPts[`${i},${j + 1}`];
-            bgFaces.push(sw.makeTriWithPts([v00, v10, v11], p00, p10, p11));
-            bgFaces.push(sw.makeTriWithPts([v00, v11, v01], p00, p11, p01));
+            const x00 = OUTER_R * cosTh[i],     y00 = OUTER_R * sinTh[i];
+            const x10 = OUTER_R * cosTh[iNext], y10 = OUTER_R * sinTh[iNext];
+            const x11 = x10,                    y11 = y10;
+            const x01 = x00,                    y01 = y00;
+
+            const v00 = bgOutPts[row0 + i],     v10 = bgOutPts[row0 + iNext];
+            const v11 = bgOutPts[row1 + iNext], v01 = bgOutPts[row1 + i];
+
+            bgFaces[bgFaceCount++] = sw.makeTriFast(v00, v10, v11, x00, y00, z0, x10, y10, z0, x11, y11, z1);
+            bgFaces[bgFaceCount++] = sw.makeTriFast(v00, v11, v01, x00, y00, z0, x11, y11, z1, x01, y01, z1);
         }
     }
 
     // Inner lithophane surface
     for (let j = 0; j < NH; j++) {
+        const z0 = zVals[j];
+        const z1 = zVals[j + 1];
+        const row0 = j * NW;
+        const row1 = (j + 1) * NW;
         for (let i = 0; i < NW; i++) {
             const iNext = (i + 1) % NW;
-            const p00 = getBgInCoord(i, j), p10 = getBgInCoord(iNext, j);
-            const p11 = getBgInCoord(iNext, j + 1), p01 = getBgInCoord(i, j + 1);
-            const v00 = bgInPts[`${i},${j}`], v10 = bgInPts[`${iNext},${j}`];
-            const v11 = bgInPts[`${iNext},${j + 1}`], v01 = bgInPts[`${i},${j + 1}`];
-            bgFaces.push(sw.makeTriWithPts([v00, v11, v10], p00, p11, p10));
-            bgFaces.push(sw.makeTriWithPts([v00, v01, v11], p00, p01, p11));
+            const r00 = rInGrid[row0 + i];
+            const r10 = rInGrid[row0 + iNext];
+            const r11 = rInGrid[row1 + iNext];
+            const r01 = rInGrid[row1 + i];
+
+            const x00 = r00 * cosTh[i],     y00 = r00 * sinTh[i];
+            const x10 = r10 * cosTh[iNext], y10 = r10 * sinTh[iNext];
+            const x11 = r11 * cosTh[iNext], y11 = r11 * sinTh[iNext];
+            const x01 = r01 * cosTh[i],     y01 = r01 * sinTh[i];
+
+            const v00 = bgInPts[row0 + i],     v10 = bgInPts[row0 + iNext];
+            const v11 = bgInPts[row1 + iNext], v01 = bgInPts[row1 + i];
+
+            bgFaces[bgFaceCount++] = sw.makeTriFast(v00, v11, v10, x00, y00, z0, x11, y11, z1, x10, y10, z0);
+            bgFaces[bgFaceCount++] = sw.makeTriFast(v00, v01, v11, x00, y00, z0, x01, y01, z1, x11, y11, z1);
         }
     }
 
     // Top ring cap (z = H_cyl)
+    const zTop = zVals[NH];
+    const rowTop = NH * NW;
     for (let i = 0; i < NW; i++) {
         const iNext = (i + 1) % NW;
-        const o0 = getBgOutCoord(i, NH), o1 = getBgOutCoord(iNext, NH);
-        const in0 = getBgInCoord(i, NH), in1 = getBgInCoord(iNext, NH);
-        const vo0 = bgOutPts[`${i},${NH}`], vo1 = bgOutPts[`${iNext},${NH}`];
-        const vi0 = bgInPts[`${i},${NH}`], vi1 = bgInPts[`${iNext},${NH}`];
-        bgFaces.push(sw.makeTriWithPts([vo0, vo1, vi1], o0, o1, in1));
-        bgFaces.push(sw.makeTriWithPts([vo0, vi1, vi0], o0, in1, in0));
+        const xo0 = OUTER_R * cosTh[i],     yo0 = OUTER_R * sinTh[i];
+        const xo1 = OUTER_R * cosTh[iNext], yo1 = OUTER_R * sinTh[iNext];
+        const ri0 = rInGrid[rowTop + i];
+        const ri1 = rInGrid[rowTop + iNext];
+        const xi0 = ri0 * cosTh[i],         yi0 = ri0 * sinTh[i];
+        const xi1 = ri1 * cosTh[iNext],     yi1 = ri1 * sinTh[iNext];
+
+        const vo0 = bgOutPts[rowTop + i],     vo1 = bgOutPts[rowTop + iNext];
+        const vi0 = bgInPts[rowTop + i],     vi1 = bgInPts[rowTop + iNext];
+
+        bgFaces[bgFaceCount++] = sw.makeTriFast(vo0, vo1, vi1, xo0, yo0, zTop, xo1, yo1, zTop, xi1, yi1, zTop);
+        bgFaces[bgFaceCount++] = sw.makeTriFast(vo0, vi1, vi0, xo0, yo0, zTop, xi1, yi1, zTop, xi0, yi0, zTop);
     }
 
     // Bottom flange or bottom ring cap (z <= 0)
     if (BASE_FLANGE > 0) {
         const rFlange = OUTER_R + 1.2;
         const rInBot = OUTER_R - MAX_WALL;
-        const flangeOutPts = {};
-        const flangeInPts = {};
+        const flangeOutPts = new Int32Array(NW);
+        const flangeInPts = new Int32Array(NW);
 
         for (let i = 0; i < NW; i++) {
-            const th = (i / NW) * 2 * Math.PI;
-            flangeOutPts[i] = sw.emitPoint(rFlange * Math.cos(th), rFlange * Math.sin(th), -BASE_FLANGE);
-            flangeInPts[i] = sw.emitPoint(rInBot * Math.cos(th), rInBot * Math.sin(th), -BASE_FLANGE);
+            flangeOutPts[i] = sw.emitPoint(rFlange * cosTh[i], rFlange * sinTh[i], -BASE_FLANGE);
+            flangeInPts[i] = sw.emitPoint(rInBot * cosTh[i], rInBot * sinTh[i], -BASE_FLANGE);
         }
 
-        const getFlangeOut = (i) => [rFlange * Math.cos((i / NW) * 2 * Math.PI), rFlange * Math.sin((i / NW) * 2 * Math.PI), -BASE_FLANGE];
-        const getFlangeIn = (i) => [rInBot * Math.cos((i / NW) * 2 * Math.PI), rInBot * Math.sin((i / NW) * 2 * Math.PI), -BASE_FLANGE];
+        const zBot = 0;
+        const zFlange = -BASE_FLANGE;
 
         for (let i = 0; i < NW; i++) {
             const iNext = (i + 1) % NW;
-            const vo0 = bgOutPts[`${i},0`], vo1 = bgOutPts[`${iNext},0`];
-            const vi0 = bgInPts[`${i},0`], vi1 = bgInPts[`${iNext},0`];
+            const vo0 = bgOutPts[i], vo1 = bgOutPts[iNext];
+            const vi0 = bgInPts[i],  vi1 = bgInPts[iNext];
             const vfo0 = flangeOutPts[i], vfo1 = flangeOutPts[iNext];
-            const vfi0 = flangeInPts[i], vfi1 = flangeInPts[iNext];
+            const vfi0 = flangeInPts[i],  vfi1 = flangeInPts[iNext];
 
-            const pO0 = getBgOutCoord(i, 0), pO1 = getBgOutCoord(iNext, 0);
-            const pI0 = getBgInCoord(i, 0), pI1 = getBgInCoord(iNext, 0);
-            const pFo0 = getFlangeOut(i), pFo1 = getFlangeOut(iNext);
-            const pFi0 = getFlangeIn(i), pFi1 = getFlangeIn(iNext);
+            const xo0 = OUTER_R * cosTh[i],     yo0 = OUTER_R * sinTh[i];
+            const xo1 = OUTER_R * cosTh[iNext], yo1 = OUTER_R * sinTh[iNext];
+            const ri0 = rInGrid[i],             ri1 = rInGrid[iNext];
+            const xi0 = ri0 * cosTh[i],         yi0 = ri0 * sinTh[i];
+            const xi1 = ri1 * cosTh[iNext],     yi1 = ri1 * sinTh[iNext];
+
+            const xfo0 = rFlange * cosTh[i],     yfo0 = rFlange * sinTh[i];
+            const xfo1 = rFlange * cosTh[iNext], yfo1 = rFlange * sinTh[iNext];
+            const xfi0 = rInBot * cosTh[i],      yfi0 = rInBot * sinTh[i];
+            const xfi1 = rInBot * cosTh[iNext],  yfi1 = rInBot * sinTh[iNext];
 
             // Flange outer wall
-            bgFaces.push(sw.makeTriWithPts([vo0, vfo0, vfo1], pO0, pFo0, pFo1));
-            bgFaces.push(sw.makeTriWithPts([vo0, vfo1, vo1], pO0, pFo1, pO1));
+            bgFaces[bgFaceCount++] = sw.makeTriFast(vo0, vfo0, vfo1, xo0, yo0, zBot, xfo0, yfo0, zFlange, xfo1, yfo1, zFlange);
+            bgFaces[bgFaceCount++] = sw.makeTriFast(vo0, vfo1, vo1, xo0, yo0, zBot, xfo1, yfo1, zFlange, xo1, yo1, zBot);
             // Flange bottom ring
-            bgFaces.push(sw.makeTriWithPts([vfo0, vfi0, vfi1], pFo0, pFi0, pFi1));
-            bgFaces.push(sw.makeTriWithPts([vfo0, vfi1, vfo1], pFo0, pFi1, pFo1));
+            bgFaces[bgFaceCount++] = sw.makeTriFast(vfo0, vfi0, vfi1, xfo0, yfo0, zFlange, xfi0, yfi0, zFlange, xfi1, yfi1, zFlange);
+            bgFaces[bgFaceCount++] = sw.makeTriFast(vfo0, vfi1, vfo1, xfo0, yfo0, zFlange, xfi1, yfi1, zFlange, xfo1, yfo1, zFlange);
             // Flange inner wall
-            bgFaces.push(sw.makeTriWithPts([vfi0, vi0, vi1], pFi0, pI0, pI1));
-            bgFaces.push(sw.makeTriWithPts([vfi0, vi1, vfi1], pFi0, pI1, pFi1));
+            bgFaces[bgFaceCount++] = sw.makeTriFast(vfi0, vi0, vi1, xfi0, yfi0, zFlange, xi0, yi0, zBot, xi1, yi1, zBot);
+            bgFaces[bgFaceCount++] = sw.makeTriFast(vfi0, vi1, vfi1, xfi0, yfi0, zFlange, xi1, yi1, zBot, xfi1, yfi1, zFlange);
         }
     } else {
+        const zBot = 0;
         for (let i = 0; i < NW; i++) {
             const iNext = (i + 1) % NW;
-            const o0 = getBgOutCoord(i, 0), o1 = getBgOutCoord(iNext, 0);
-            const in0 = getBgInCoord(i, 0), in1 = getBgInCoord(iNext, 0);
-            const vo0 = bgOutPts[`${i},0`], vo1 = bgOutPts[`${iNext},0`];
-            const vi0 = bgInPts[`${i},0`], vi1 = bgInPts[`${iNext},0`];
-            bgFaces.push(sw.makeTriWithPts([vo0, vi1, vo1], o0, in1, o1));
-            bgFaces.push(sw.makeTriWithPts([vo0, vi0, vi1], o0, in0, in1));
+            const xo0 = OUTER_R * cosTh[i],     yo0 = OUTER_R * sinTh[i];
+            const xo1 = OUTER_R * cosTh[iNext], yo1 = OUTER_R * sinTh[iNext];
+            const ri0 = rInGrid[i],             ri1 = rInGrid[iNext];
+            const xi0 = ri0 * cosTh[i],         yi0 = ri0 * sinTh[i];
+            const xi1 = ri1 * cosTh[iNext],     yi1 = ri1 * sinTh[iNext];
+
+            const vo0 = bgOutPts[i], vo1 = bgOutPts[iNext];
+            const vi0 = bgInPts[i],  vi1 = bgInPts[iNext];
+
+            bgFaces[bgFaceCount++] = sw.makeTriFast(vo0, vi1, vo1, xo0, yo0, zBot, xi1, yi1, zBot, xo1, yo1, zBot);
+            bgFaces[bgFaceCount++] = sw.makeTriFast(vo0, vi0, vi1, xo0, yo0, zBot, xi0, yi0, zBot, xi1, yi1, zBot);
         }
     }
 
     const bgShell = sw.allocId();
     const bgBrep = sw.allocId();
-    sw.emit(`#${bgShell} = CLOSED_SHELL('',(${bgFaces.map(f => '#' + f).join(',')}));`);
+    sw.emitShell(bgShell, bgFaces, bgFaceCount);
     sw.emit(`#${bgBrep} = FACETED_BREP('Space_Background_Brep',#${bgShell});`);
     sw.registerComponent('Space_Background', bgBrep, styleBg);
 
@@ -680,7 +798,7 @@ async function main() {
 
         const shellId = sw.allocId();
         const brepId = sw.allocId();
-        sw.emit(`#${shellId} = CLOSED_SHELL('',(${thisStarFaces.map(f => '#' + f).join(',')}));`);
+        sw.emitShell(shellId, thisStarFaces);
         sw.emit(`#${brepId} = FACETED_BREP('Star_${sIdx}',#${shellId});`);
         starBrepIds.push(brepId);
     }
@@ -699,88 +817,129 @@ async function main() {
         const rOutInactive = OUTER_R - 0.15;
         const rInInactive = OUTER_R - 0.25;
 
-        const rGridOut = Array.from({ length: NH + 1 }, (_, j) => {
-            const rowIdx = Math.min(j, NH - 1);
-            return Array.from({ length: NW }, (_, i) => mask[rowIdx][i] ? rOutActive : rOutInactive);
-        });
-        const rGridIn = Array.from({ length: NH + 1 }, (_, j) => {
-            const rowIdx = Math.min(j, NH - 1);
-            return Array.from({ length: NW }, (_, i) => mask[rowIdx][i] ? rInActive : rInInactive);
-        });
+        const rGridOut = new Float32Array((NH + 1) * NW);
+        const rGridIn = new Float32Array((NH + 1) * NW);
 
-        const outPts = {}, inPts = {};
         for (let j = 0; j <= NH; j++) {
-            const z = (j / NH) * H_cyl;
+            const rowIdx = Math.min(j, NH - 1);
+            const maskRow = mask[rowIdx];
+            const rowOffset = j * NW;
             for (let i = 0; i < NW; i++) {
-                const th = (i / NW) * 2 * Math.PI;
-                const ro = rGridOut[j][i];
-                const ri = rGridIn[j][i];
-                outPts[`${i},${j}`] = sw.emitPoint(ro * Math.cos(th), ro * Math.sin(th), z);
-                inPts[`${i},${j}`] = sw.emitPoint(ri * Math.cos(th), ri * Math.sin(th), z);
+                if (maskRow[i]) {
+                    rGridOut[rowOffset + i] = rOutActive;
+                    rGridIn[rowOffset + i] = rInActive;
+                } else {
+                    rGridOut[rowOffset + i] = rOutInactive;
+                    rGridIn[rowOffset + i] = rInInactive;
+                }
             }
         }
 
-        const getOutC = (i, j) => {
-            const th = (i / NW) * 2 * Math.PI;
-            const z = (j / NH) * H_cyl;
-            const ro = rGridOut[j][i % NW];
-            return [ro * Math.cos(th), ro * Math.sin(th), z];
-        };
-        const getInC = (i, j) => {
-            const th = (i / NW) * 2 * Math.PI;
-            const z = (j / NH) * H_cyl;
-            const ri = rGridIn[j][i % NW];
-            return [ri * Math.cos(th), ri * Math.sin(th), z];
-        };
+        const outPts = new Int32Array((NH + 1) * NW);
+        const inPts = new Int32Array((NH + 1) * NW);
+        for (let j = 0; j <= NH; j++) {
+            const z = zVals[j];
+            const rowOffset = j * NW;
+            for (let i = 0; i < NW; i++) {
+                const ro = rGridOut[rowOffset + i];
+                const ri = rGridIn[rowOffset + i];
+                outPts[rowOffset + i] = sw.emitPoint(ro * cosTh[i], ro * sinTh[i], z);
+                inPts[rowOffset + i] = sw.emitPoint(ri * cosTh[i], ri * sinTh[i], z);
+            }
+        }
 
-        const faces = [];
+        const totalFaces = 4 * NW * NH + 4 * NW;
+        const faces = new Int32Array(totalFaces);
+        let faceCount = 0;
+
+        // Outer surface
         for (let j = 0; j < NH; j++) {
+            const z0 = zVals[j];
+            const z1 = zVals[j + 1];
+            const row0 = j * NW;
+            const row1 = (j + 1) * NW;
             for (let i = 0; i < NW; i++) {
                 const iNext = (i + 1) % NW;
-                const p00 = getOutC(i, j), p10 = getOutC(iNext, j);
-                const p11 = getOutC(iNext, j + 1), p01 = getOutC(i, j + 1);
-                const v00 = outPts[`${i},${j}`], v10 = outPts[`${iNext},${j}`];
-                const v11 = outPts[`${iNext},${j + 1}`], v01 = outPts[`${i},${j + 1}`];
-                faces.push(sw.makeTriWithPts([v00, v10, v11], p00, p10, p11));
-                faces.push(sw.makeTriWithPts([v00, v11, v01], p00, p11, p01));
+                const ro00 = rGridOut[row0 + i],     ro10 = rGridOut[row0 + iNext];
+                const ro11 = rGridOut[row1 + iNext], ro01 = rGridOut[row1 + i];
+
+                const x00 = ro00 * cosTh[i],     y00 = ro00 * sinTh[i];
+                const x10 = ro10 * cosTh[iNext], y10 = ro10 * sinTh[iNext];
+                const x11 = ro11 * cosTh[iNext], y11 = ro11 * sinTh[iNext];
+                const x01 = ro01 * cosTh[i],     y01 = ro01 * sinTh[i];
+
+                const v00 = outPts[row0 + i],     v10 = outPts[row0 + iNext];
+                const v11 = outPts[row1 + iNext], v01 = outPts[row1 + i];
+
+                faces[faceCount++] = sw.makeTriFast(v00, v10, v11, x00, y00, z0, x10, y10, z0, x11, y11, z1);
+                faces[faceCount++] = sw.makeTriFast(v00, v11, v01, x00, y00, z0, x11, y11, z1, x01, y01, z1);
             }
         }
 
+        // Inner surface
         for (let j = 0; j < NH; j++) {
+            const z0 = zVals[j];
+            const z1 = zVals[j + 1];
+            const row0 = j * NW;
+            const row1 = (j + 1) * NW;
             for (let i = 0; i < NW; i++) {
                 const iNext = (i + 1) % NW;
-                const p00 = getInC(i, j), p10 = getInC(iNext, j);
-                const p11 = getInC(iNext, j + 1), p01 = getInC(i, j + 1);
-                const v00 = inPts[`${i},${j}`], v10 = inPts[`${iNext},${j}`];
-                const v11 = inPts[`${iNext},${j + 1}`], v01 = inPts[`${i},${j + 1}`];
-                faces.push(sw.makeTriWithPts([v00, v11, v10], p00, p11, p10));
-                faces.push(sw.makeTriWithPts([v00, v01, v11], p00, p01, p11));
+                const ri00 = rGridIn[row0 + i],     ri10 = rGridIn[row0 + iNext];
+                const ri11 = rGridIn[row1 + iNext], ri01 = rGridIn[row1 + i];
+
+                const x00 = ri00 * cosTh[i],     y00 = ri00 * sinTh[i];
+                const x10 = ri10 * cosTh[iNext], y10 = ri10 * sinTh[iNext];
+                const x11 = ri11 * cosTh[iNext], y11 = ri11 * sinTh[iNext];
+                const x01 = ri01 * cosTh[i],     y01 = ri01 * sinTh[i];
+
+                const v00 = inPts[row0 + i],     v10 = inPts[row0 + iNext];
+                const v11 = inPts[row1 + iNext], v01 = inPts[row1 + i];
+
+                faces[faceCount++] = sw.makeTriFast(v00, v11, v10, x00, y00, z0, x11, y11, z1, x10, y10, z0);
+                faces[faceCount++] = sw.makeTriFast(v00, v01, v11, x00, y00, z0, x01, y01, z1, x11, y11, z1);
             }
         }
 
+        // Bottom ring (z = 0)
+        const zBot = zVals[0];
         for (let i = 0; i < NW; i++) {
             const iNext = (i + 1) % NW;
-            const o0 = getOutC(i, 0), o1 = getOutC(iNext, 0);
-            const in0 = getInC(i, 0), in1 = getInC(iNext, 0);
-            const vo0 = outPts[`${i},0`], vo1 = outPts[`${iNext},0`];
-            const vi0 = inPts[`${i},0`], vi1 = inPts[`${iNext},0`];
-            faces.push(sw.makeTriWithPts([vo0, vi1, vo1], o0, in1, o1));
-            faces.push(sw.makeTriWithPts([vo0, vi0, vi1], o0, in0, in1));
+            const ro0 = rGridOut[i],     ro1 = rGridOut[iNext];
+            const ri0 = rGridIn[i],      ri1 = rGridIn[iNext];
+            const xo0 = ro0 * cosTh[i],  yo0 = ro0 * sinTh[i];
+            const xo1 = ro1 * cosTh[iNext], yo1 = ro1 * sinTh[iNext];
+            const xi0 = ri0 * cosTh[i],  yi0 = ri0 * sinTh[i];
+            const xi1 = ri1 * cosTh[iNext], yi1 = ri1 * sinTh[iNext];
+
+            const vo0 = outPts[i], vo1 = outPts[iNext];
+            const vi0 = inPts[i],  vi1 = inPts[iNext];
+
+            faces[faceCount++] = sw.makeTriFast(vo0, vi1, vo1, xo0, yo0, zBot, xi1, yi1, zBot, xo1, yo1, zBot);
+            faces[faceCount++] = sw.makeTriFast(vo0, vi0, vi1, xo0, yo0, zBot, xi0, yi0, zBot, xi1, yi1, zBot);
         }
 
+        // Top ring (z = H_cyl)
+        const zTop = zVals[NH];
+        const rowTop = NH * NW;
         for (let i = 0; i < NW; i++) {
             const iNext = (i + 1) % NW;
-            const o0 = getOutC(i, NH), o1 = getOutC(iNext, NH);
-            const in0 = getInC(i, NH), in1 = getInC(iNext, NH);
-            const vo0 = outPts[`${i},${NH}`], vo1 = outPts[`${iNext},${NH}`];
-            const vi0 = inPts[`${i},${NH}`], vi1 = inPts[`${iNext},${NH}`];
-            faces.push(sw.makeTriWithPts([vo0, vo1, vi1], o0, o1, in1));
-            faces.push(sw.makeTriWithPts([vo0, vi1, vi0], o0, in1, in0));
+            const ro0 = rGridOut[rowTop + i],     ro1 = rGridOut[rowTop + iNext];
+            const ri0 = rGridIn[rowTop + i],      ri1 = rGridIn[rowTop + iNext];
+            const xo0 = ro0 * cosTh[i],  yo0 = ro0 * sinTh[i];
+            const xo1 = ro1 * cosTh[iNext], yo1 = ro1 * sinTh[iNext];
+            const xi0 = ri0 * cosTh[i],  yi0 = ri0 * sinTh[i];
+            const xi1 = ri1 * cosTh[iNext], yi1 = ri1 * sinTh[iNext];
+
+            const vo0 = outPts[rowTop + i], vo1 = outPts[rowTop + iNext];
+            const vi0 = inPts[rowTop + i],  vi1 = inPts[rowTop + iNext];
+
+            faces[faceCount++] = sw.makeTriFast(vo0, vo1, vi1, xo0, yo0, zTop, xo1, yo1, zTop, xi1, yi1, zTop);
+            faces[faceCount++] = sw.makeTriFast(vo0, vi1, vi0, xo0, yo0, zTop, xi1, yi1, zTop, xi0, yi0, zTop);
         }
 
         const shellId = sw.allocId();
         const brepId = sw.allocId();
-        sw.emit(`#${shellId} = CLOSED_SHELL('',(${faces.map(f => '#' + f).join(',')}));`);
+        sw.emitShell(shellId, faces, faceCount);
         sw.emit(`#${brepId} = FACETED_BREP('${name}_Brep',#${shellId});`);
         sw.registerComponent(name, brepId, styleId);
     }
@@ -788,25 +947,7 @@ async function main() {
     buildInlaidComponent('Constellation_Lines', linesMask, 0.010, styleLines);
     buildInlaidComponent('Index_Lines', indexMask, 0.015, styleIndex);
 
-    const now = new Date().toISOString().replace(/\.\d+Z$/, '');
-    const headerStr = [
-        'ISO-10303-21;',
-        'HEADER;',
-        "FILE_DESCRIPTION(('Cylindrical Multicolor Lithophane Star Map Assembly'),'2;1');",
-        `FILE_NAME('${path.basename(OUTPUT_FILE)}','${now}',('User'),('User'),'Processor','System','');`,
-        "FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));",
-        'ENDSEC;',
-        'DATA;'
-    ].join('\n') + '\n';
-
-    console.log(`Writing ${OUTPUT_FILE}...`);
-    const fd = fs.openSync(OUTPUT_FILE, 'w');
-    fs.writeSync(fd, headerStr);
-    for (const line of sw.lines) {
-        fs.writeSync(fd, line + '\n');
-    }
-    fs.writeSync(fd, 'ENDSEC;\nEND-ISO-10303-21;\n');
-    fs.closeSync(fd);
+    sw.close();
 
     const szMb = (fs.statSync(OUTPUT_FILE).size / (1024 * 1024)).toFixed(2);
     console.log('\n=== COMPLETE ===');
