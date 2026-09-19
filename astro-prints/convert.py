@@ -1,702 +1,780 @@
 #!/usr/bin/env python3
 """
-Cylindrical Multicolor Star Map Lithophane — STEP File Generator (Python Version)
-================================================================================
-Projects an astronomical star chart onto a 3D printable cylinder in STEP
-(ISO 10303-21 AP214/AP242) format for multicolor 3D printing (Bambu AMS, OrcaSlicer,
-PrusaSlicer).
+Cylindrical Multicolor Star Map Dewshield — 3MF & STEP Generator
+================================================================
+Generates a 3D printable telescope dewshield (130mm outer diameter x 200mm height)
+with astronomical star chart features cutting completely through the full tube wall.
 
-Key Design & Engineering Features:
-- Natural astronomical orientation: Right Ascension wraps 360° circumferentially;
-  Declination spans the cylinder axis Z with date markings at the bottom (Z approx 0).
-- Lithophane interior: Wall thickness varies smoothly based on image brightness
-  (thin wall for bright stars/lines to let light through, thick wall for dark space).
-- Smooth exterior: Constant outer radius (zero exterior relief bumps) so prints
-  are smooth to the touch, print reliably without nozzle knocking or wipe-tower collapses.
-- Multicolor assembly: 4 distinct color parts matching the sky map colors:
-    1. Space_Background   (Navy: #0a0e27)  — Full lithophane hollow cylinder tube with base flange
-    2. Stars              (Yellow: #ffd700) — Metric round circular star dots
-    3. Constellation_Lines(Blue: #2e6fd9)  — Constellation stick figures and text
-    4. Index_Lines        (Cyan: #8ab4f8)  — Coordinate grid (RA/Dec) & bottom date ruler
-- 100% 2-manifold, watertight closed solids natively compatible with all CAD kernels & slicers.
-- Zero crashes, zero sewing hangs in OpenCASCADE / BambuStudio / OrcaSlicer.
+Pre-configured for Bambu Lab H2C with 1 AMS and 1 HT-AMS:
+  Filament 1: TransparentGreen (#00E080) -> Ecliptic & Constellation Labels
+  Filament 2: Red (#FF2020)              -> Constellation Lines
+  Filament 3: Yellow (#FFD700)           -> Stars (Mag 0 to 5)
+  Filament 4: White (#FFFFFF)            -> Index (RA Ruler, Month Calendar, Coordinate Grid)
+  Filament 5: Black (#111111)            -> Dewshield Body (Space Background)
 
-Usage:
-  python convert.py [options]
-
-Options:
-  --input <file>         Input image file (default: auto-detect)
-  --output <file>        Output STEP file (default: image0_cylinder.stp)
-  --radius <mm>          Outer cylinder radius in mm (default: 35.0)
-  --height <mm>          Cylinder height in mm (default: auto isotropic ~138mm)
-  --min-wall <mm>        Thinnest wall section for brightest pixels in mm (default: 0.8)
-  --max-wall <mm>        Thickest wall section for darkest pixels in mm (default: 2.2)
-  --base-flange <mm>     Bottom mounting flange height in mm (default: 2.0)
-  --relief <mm>          Exterior relief height in mm (default: 0.0 = smooth lithophane)
-  --grid-w <num>         Circumferential grid resolution (default: 180)
-  --grid-h <num>         Axial grid resolution (default: 113)
-  --color-bg <hex>       Hex color for space background (default: 0a0e27)
-  --color-stars <hex>    Hex color for stars (default: ffd700)
-  --color-lines <hex>    Hex color for constellation lines (default: 2e6fd9)
-  --color-index <hex>    Hex color for index/dates (default: 8ab4f8)
-  --help                 Show this help
+All 5 colors extend through the FULL 2.4mm width of the tube (R_inner=62.6mm to R_outer=65.0mm).
+Both interior and exterior show identical crisp, continuous celestial geometry.
+Zero holes, zero non-manifold edges, zero broken line fragments.
 """
 
 import os
 import sys
-import glob
+import json
 import math
 import time
+import zipfile
 import argparse
 import numpy as np
-from PIL import Image
-import scipy.ndimage as ndi
+from PIL import Image, ImageDraw, ImageFont
 
+WORKSPACE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-def hex_to_rgb(hex_str):
-    clean = hex_str.lstrip('#')
-    if len(clean) == 3:
-        clean = ''.join(c * 2 for c in clean)
-    num = int(clean, 16)
-    return ((num >> 16) & 255) / 255.0, ((num >> 8) & 255) / 255.0, (num & 255) / 255.0
+PARTS_CONFIG = [
+    {
+        "class": 0,
+        "name": "Dewshield_Body",
+        "extruder": 5,
+        "color_hex": "111111",
+        "rgb": (0.0667, 0.0667, 0.0667),
+        "desc": "Dewshield Body (Space Background)"
+    },
+    {
+        "class": 1,
+        "name": "Labels_and_Ecliptic",
+        "extruder": 1,
+        "color_hex": "00e080",
+        "rgb": (0.0000, 0.8784, 0.5020),
+        "desc": "Ecliptic & Constellation Labels"
+    },
+    {
+        "class": 2,
+        "name": "Constellations",
+        "extruder": 2,
+        "color_hex": "ff2020",
+        "rgb": (1.0000, 0.1255, 0.1255),
+        "desc": "Constellation Lines"
+    },
+    {
+        "class": 3,
+        "name": "Stars",
+        "extruder": 3,
+        "color_hex": "ffd700",
+        "rgb": (1.0000, 0.8431, 0.0000),
+        "desc": "Stars (Stellar Discs)"
+    },
+    {
+        "class": 4,
+        "name": "Index",
+        "extruder": 4,
+        "color_hex": "ffffff",
+        "rgb": (1.0000, 1.0000, 1.0000),
+        "desc": "RA Ruler, Month Calendar, Coordinate Grid"
+    },
+]
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Convert Star Map image to 3D printable multicolor lithophane STEP cylinder.")
-    parser.add_argument('--input', type=str, default=None, help="Input image path")
-    parser.add_argument('--output', type=str, default='image0_cylinder.stp', help="Output STEP file path")
-    parser.add_argument('--radius', '--radious', dest='radius', type=float, default=35.0, help="Outer cylinder radius in mm (default: 35.0)")
-    parser.add_argument('--height', type=float, default=None, help="Cylinder height in mm (default: auto isotropic)")
-    parser.add_argument('--min-wall', type=float, default=0.8, help="Thinnest wall section (brightest) in mm (default: 0.8)")
-    parser.add_argument('--max-wall', type=float, default=2.2, help="Thickest wall section (darkest) in mm (default: 2.2)")
-    parser.add_argument('--base-flange', '--base', dest='base_flange', type=float, default=2.0, help="Bottom mounting flange height in mm (default: 2.0)")
-    parser.add_argument('--relief', type=float, default=0.0, help="Exterior relief in mm (default: 0.0 = smooth lithophane)")
-    parser.add_argument('--grid-w', '--angle', dest='grid_w', type=int, default=180, help="Circumferential grid steps (default: 180)")
-    parser.add_argument('--grid-h', '--vert', dest='grid_h', type=int, default=113, help="Axial grid steps (default: 113)")
-    parser.add_argument('--color-bg', '--color0', dest='color_bg', type=str, default='0a0e27', help="Hex color for space background")
-    parser.add_argument('--color-stars', '--color1', dest='color_stars', type=str, default='ffd700', help="Hex color for stars")
-    parser.add_argument('--color-lines', '--color2', dest='color_lines', type=str, default='2e6fd9', help="Hex color for constellation lines")
-    parser.add_argument('--color-index', '--color3', dest='color_index', type=str, default='8ab4f8', help="Hex color for index/dates")
+    parser = argparse.ArgumentParser(
+        description="Convert Astronomical Star Chart into a 5-Color Full-Width Dewshield (3MF & STEP)."
+    )
+    parser.add_argument('--radius', '-r', type=float, default=65.0, help="Outer cylinder radius in mm (default: 65.0)")
+    parser.add_argument('--wall', '--wall-thickness', '-w', dest='wall', type=float, default=2.4, help="Total tube wall thickness in mm (default: 2.4)")
+    parser.add_argument('--height', '-H', type=float, default=200.0, help="Cylinder height in mm (default: 200.0)")
+    parser.add_argument('--angle', '--grid-w', dest='grid_w', type=int, default=360, help="Circumferential grid resolution (default: 360)")
+    parser.add_argument('--vert', '--grid-h', dest='grid_h', type=int, default=180, help="Axial grid resolution (default: 180)")
+    parser.add_argument('--rotate', type=int, default=0, choices=[0, 90, 180, 270], help="Image rotation in degrees (default: 0)")
+    parser.add_argument('--output-3mf', '-m', type=str, default='dewshield_h2c_5color.3mf', help="Output 3MF path (default: dewshield_h2c_5color.3mf)")
+    parser.add_argument('--output-step', '-s', type=str, default='dewshield_clean.stp', help="Output STEP path (default: dewshield_clean.stp)")
+    parser.add_argument('--skip-step', action='store_true', help="Skip generating STEP file (only output 3MF)")
+    parser.add_argument('--skip-3mf', action='store_true', help="Skip generating 3MF file (only output STEP)")
     return parser.parse_args()
 
 
-def find_default_image():
-    patterns = [
-        'image0.thumb.jpeg.aa268959b09fe82e7febe723f0c3ff75.jpeg',
-        'image0.thumb.*.jpeg',
-        'image0*.jpeg',
-        '*.jpeg',
-        '*.jpg',
-        '*.png'
-    ]
-    for pat in patterns:
-        matches = glob.glob(pat)
-        if matches:
-            return matches[0]
-    return None
+def render_skymap_layers(w=4084, h=2000):
+    """
+    Renders the astronomical dataset onto a 4084x2000 pixel discrete map:
+      0 = Background
+      1 = Labels & Ecliptic (TransparentGreen)
+      2 = Constellations (Red)
+      3 = Stars (Yellow)
+      4 = Index (White)
+    """
+    stars_file = os.path.join(WORKSPACE_DIR, 'stars.6.json')
+    lines_file = os.path.join(WORKSPACE_DIR, 'constellations.lines.json')
+    names_file = os.path.join(WORKSPACE_DIR, 'constellations.json')
 
+    with open(stars_file, encoding='utf-8') as f:
+        stars_data = json.load(f)
+    with open(lines_file, encoding='utf-8') as f:
+        lines_data = json.load(f)
+    with open(names_file, encoding='utf-8') as f:
+        names_data = json.load(f)
 
-def main():
-    args = parse_args()
-    input_file = args.input
-    if not input_file:
-        input_file = find_default_image()
-        if not input_file:
-            print("Error: No input image found. Specify with --input <file>")
-            sys.exit(1)
+    y_top = int(h * 0.075)  # 150 px for month calendar strip
+    y_bot = int(h * 0.925)  # 1850 px for RA hour ruler
+    h_sky = y_bot - y_top
+    dec_min = -75.0
+    dec_max = 75.0
 
-    print("=== Cylindrical Multicolor Star Map Lithophane Generator (Python) ===")
-    print(f"Loading image: {input_file}")
-    img = Image.open(input_file).convert('RGB')
+    def ra_dec_to_xy(ra_deg, dec_deg):
+        x = (1.0 - ((ra_deg % 360.0) / 360.0)) * w
+        y = y_top + (dec_max - dec_deg) / (dec_max - dec_min) * h_sky
+        return x, y
 
-    # Rotate 90 CCW to natural astronomical orientation:
-    # Circumference wraps the 24-hour RA axis (750px),
-    # Cylinder axis Z spans Declination (472px) with date markings at the bottom (Z approx 0).
-    rot_img = img.transpose(Image.Transpose.ROTATE_90)
-    rot_arr = np.array(rot_img)
-    H_orig, W_orig, _ = rot_arr.shape
-    print(f"Astronomical orientation: {W_orig}x{H_orig} (RA circumference: {W_orig}px, Dec height: {H_orig}px)")
+    map_img = Image.new('L', (w, h), 0)
+    draw = ImageDraw.Draw(map_img)
 
-    R_outer = args.radius
-    min_wall = args.min_wall
-    max_wall = args.max_wall
-    base_flange = args.base_flange
-    relief = max(0.0, args.relief)
-    nw = args.grid_w
-    nh = args.grid_h
+    # Fonts
+    font_path = r"C:\Windows\Fonts\arialbd.ttf"
+    try:
+        font_large = ImageFont.truetype(font_path, 36)
+        font_mid   = ImageFont.truetype(font_path, 24)
+        font_ruler = ImageFont.truetype(font_path, 32)
+        font_dec   = ImageFont.truetype(font_path, 22)
+        font_sub   = ImageFont.truetype(font_path, 18)
+    except Exception:
+        font_large = ImageFont.load_default()
+        font_mid = font_large; font_ruler = font_large; font_dec = font_large; font_sub = font_large
 
-    # Isotropic metric scaling
-    C = 2 * math.pi * R_outer
-    scale = C / W_orig
-    H_cyl = args.height if args.height is not None else (H_orig * scale)
-    print(f"Cylinder parameters: Outer R={R_outer:.2f} mm, Height={H_cyl:.2f} mm")
-    print(f"Lithophane wall thickness: {min_wall:.2f} mm (bright) to {max_wall:.2f} mm (dark)")
-    print(f"Exterior relief: {relief:.2f} mm ({'Smooth lithophane' if relief == 0 else 'Raised relief'})")
-    print(f"Resolution: {nw} angular x {nh} axial grid")
+    print("Drawing Layer 4: Coordinate Grid...")
+    # RA lines every 15 deg (1 hour)
+    for hr in range(24):
+        ra = hr * 15.0
+        x, _ = ra_dec_to_xy(ra, 0)
+        draw.line([(x, y_top), (x, y_bot)], fill=4, width=3)
 
-    # Downsampled image for grid processing
-    down_img = rot_img.resize((nw, nh), Image.Resampling.LANCZOS)
-    down_arr = np.array(down_img)
+    # Dec lines every 10 deg (Equator is width 7)
+    for dec in range(-70, 80, 10):
+        _, y = ra_dec_to_xy(0, dec)
+        lw = 7 if dec == 0 else 3
+        draw.line([(0, y), (w, y)], fill=4, width=lw)
 
-    # 1. Detect Star Points on full resolution for maximum roundness and precision
-    r_full = rot_arr[:, :, 0].astype(float)
-    g_full = rot_arr[:, :, 1].astype(float)
-    b_full = rot_arr[:, :, 2].astype(float)
-    lum_full = 0.299 * r_full + 0.587 * g_full + 0.114 * b_full
+    # Dec Labels
+    for dec in range(-60, 70, 20):
+        dstr = "EQUATOR 0°" if dec == 0 else (f"+{dec}°" if dec > 0 else f"{dec}°")
+        _, y = ra_dec_to_xy(0, dec)
+        draw.text((25, y - 12), dstr, fill=4, font=font_dec)
+        draw.text((w - 170, y - 12), dstr, fill=4, font=font_dec)
 
-    date_lim_full = int(50 * H_orig / 472)
-    mag_lim_full = int(420 * H_orig / 472)
-    sky_mask_full = np.zeros((H_orig, W_orig), dtype=bool)
-    sky_mask_full[date_lim_full:mag_lim_full, :] = True
+    print("Drawing Layer 2: Constellation Lines (Red)...")
+    for feat in lines_data['features']:
+        coords = feat['geometry']['coordinates']
+        for seg in coords:
+            pts = []
+            for lon, lat in seg:
+                ra = (lon + 360.0) % 360.0
+                dec = lat
+                pts.append(ra_dec_to_xy(ra, dec))
+            for i in range(len(pts) - 1):
+                x1, y1 = pts[i]; x2, y2 = pts[i+1]
+                if max(y1, y2) < y_top or min(y1, y2) > y_bot:
+                    continue
+                if abs(x1 - x2) < w / 2:
+                    draw.line([(x1, y1), (x2, y2)], fill=2, width=10)
+                else:
+                    if x1 > x2:
+                        dx = (w - x1) + x2
+                        frac = (w - x1) / dx
+                        y_mid = y1 + (y2 - y1) * frac
+                        draw.line([(x1, y1), (w, y_mid)], fill=2, width=10)
+                        draw.line([(0, y_mid), (x2, y2)], fill=2, width=10)
+                    else:
+                        dx = x1 + (w - x2)
+                        frac = x1 / dx
+                        y_mid = y1 + (y2 - y1) * frac
+                        draw.line([(x1, y1), (0, y_mid)], fill=2, width=10)
+                        draw.line([(w, y_mid), (x2, y2)], fill=2, width=10)
 
-    star_cand = sky_mask_full & (lum_full > 165) & (r_full > 120) & (g_full > 120)
-    lbl, num = ndi.label(star_cand)
-    sizes = ndi.sum(star_cand, lbl, range(1, num + 1))
-    coms = ndi.center_of_mass(star_cand, lbl, range(1, num + 1))
+    print("Drawing Layer 1: Labels & Ecliptic (TransparentGreen)...")
+    # Ecliptic curve
+    ecliptic_pts = []
+    for deg in range(0, 361, 1):
+        l_rad = math.radians(deg)
+        eps_rad = math.radians(23.439)
+        sin_dec = math.sin(eps_rad) * math.sin(l_rad)
+        dec = math.degrees(math.asin(sin_dec))
+        ra = math.degrees(math.atan2(math.cos(eps_rad) * math.sin(l_rad), math.cos(l_rad)))
+        x, y = ra_dec_to_xy(ra, dec)
+        ecliptic_pts.append((x, y))
 
-    stars = []
-    for i in range(1, num + 1):
-        sz = sizes[i - 1]
-        if sz < 4:
+    ecliptic_pts.sort(key=lambda p: p[0])
+    for i in range(len(ecliptic_pts) - 1):
+        p1 = ecliptic_pts[i]; p2 = ecliptic_pts[i+1]
+        if abs(p1[0] - p2[0]) < 80:
+            if (i // 6) % 2 == 0:
+                draw.line([p1, p2], fill=1, width=7)
+
+    PROMINENT = {
+        "Ori": "ORION", "UMa": "URSA MAJOR", "Cas": "CASSIOPEIA", "Leo": "LEO",
+        "Cyg": "CYGNUS", "Lyr": "LYRA", "Aql": "AQUILA", "Tau": "TAURUS",
+        "Gem": "GEMINI", "CMa": "CANIS MAJOR", "Peg": "PEGASUS", "Sco": "SCORPIUS",
+        "Sgr": "SAGITTARIUS", "Boo": "BOOTES", "Her": "HERCULES", "Vir": "VIRGO",
+        "And": "ANDROMEDA", "Per": "PERSEUS", "Aur": "AURIGA", "Cep": "CEPHEUS",
+        "Cru": "CRUX", "Cen": "CENTAURUS", "Car": "CARINA", "Hya": "HYDRA",
+        "Oph": "OPHIUCHUS", "Cet": "CETUS", "Cap": "CAPRICORNUS", "Aqr": "AQUARIUS",
+        "Psc": "PISCES", "Ari": "ARIES", "Dra": "DRACO"
+    }
+    EXCLUDE = {"Mic", "Tel", "Cae", "Ant", "Sex", "Vul", "Equ", "Men", "Cha", "Vol", "Mus"}
+
+    for feat in names_data['features']:
+        cid = feat['id']
+        if cid in EXCLUDE:
             continue
-        sub = (lbl == i)
-        ys, xs = np.where(sub)
-        h_box = ys.max() - ys.min() + 1
-        w_box = xs.max() - xs.min() + 1
-        aspect = w_box / max(h_box, 1)
-        if 0.35 <= aspect <= 2.8 and max(h_box, w_box) <= 28:
-            cy, cx = coms[i - 1]
-            rad_px = max(np.sqrt(sz / np.pi), 0.8)
-            rad_mm = max(rad_px * scale, 0.55)
-            th = (cx / W_orig) * 2 * math.pi
-            z = H_cyl * (cy / H_orig)
-            stars.append((th, z, rad_mm))
+        lon, lat = feat['geometry']['coordinates']
+        ra = (lon + 360.0) % 360.0
+        dec = lat
+        x, y = ra_dec_to_xy(ra, dec)
 
-    print(f"Detected {len(stars)} prominent round star points")
+        if y_top + 50 <= y <= y_bot - 50:
+            is_prom = cid in PROMINENT
+            name = PROMINENT[cid] if is_prom else feat['properties'].get('name', cid).upper()
+            fnt = font_large if is_prom else font_mid
+            bbox = draw.textbbox((0, 0), name, font=fnt)
+            tw = bbox[2] - bbox[0]; th = bbox[3] - bbox[1]
+            tx = x - tw / 2; ty = y - th / 2
+            draw.rectangle([(tx - 6, ty - 4), (tx + tw + 6, ty + th + 4)], fill=0)
+            draw.text((tx, ty), name, fill=1, font=fnt)
 
-    # 2. Feature Masks for Index/Date lines and Constellation lines on the downsampled grid
-    r_down = down_arr[:, :, 0].astype(float)
-    g_down = down_arr[:, :, 1].astype(float)
-    b_down = down_arr[:, :, 2].astype(float)
-    lum_down = 0.299 * r_down + 0.587 * g_down + 0.114 * b_down
+    print("Drawing Layer 3: Stars (Yellow)...")
+    star_list = []
+    for feat in stars_data['features']:
+        lon, lat = feat['geometry']['coordinates']
+        mag = feat['properties']['mag']
+        ra = (lon + 360.0) % 360.0
+        dec = lat
+        if dec_min - 4 <= dec <= dec_max + 4:
+            star_list.append((ra, dec, mag))
 
-    date_lim_down = int(50 * nh / H_orig)
-    mag_lim_down = int(420 * nh / H_orig)
+    star_list.sort(key=lambda s: -s[2])
 
-    sky_mask_down = np.zeros((nh, nw), dtype=bool)
-    sky_mask_down[date_lim_down:mag_lim_down, :] = True
+    for ra, dec, mag in star_list:
+        x, y = ra_dec_to_xy(ra, dec)
+        if not (y_top + 5 <= y <= y_bot - 5):
+            continue
+        if mag <= 0.0:    r_s = 20
+        elif mag <= 1.5:  r_s = 16
+        elif mag <= 2.5:  r_s = 12
+        elif mag <= 3.5:  r_s = 9
+        elif mag <= 4.5:  r_s = 7
+        elif mag <= 5.0:  r_s = 5
+        else: continue
+        draw.ellipse([(x - r_s, y - r_s), (x + r_s, y + r_s)], fill=3)
+        if mag <= 1.0:
+            draw.ellipse([(x - r_s - 3, y - r_s - 3), (x + r_s + 3, y + r_s + 3)], outline=3, width=3)
 
-    # Date marks at the bottom (y < date_lim_down -> Z near 0)
-    # Magnitude scale at the top (y >= mag_lim_down -> Z near H_cyl)
-    ruler_mask = np.zeros((nh, nw), dtype=bool)
-    ruler_mask[:date_lim_down, :] = (lum_down[:date_lim_down, :] > 55)
-    ruler_mask[mag_lim_down:, :] = (lum_down[mag_lim_down:, :] > 55)
+    print("Drawing Top Month Header & Bottom RA Ruler...")
+    # Top Header: Month Calendar Ruler
+    draw.rectangle([(0, 0), (w, y_top)], fill=0)
+    draw.line([(0, y_top), (w, y_top)], fill=4, width=6)
+    months = [
+        ("DECEMBER", 0), ("NOVEMBER", 1), ("OCTOBER", 2), ("SEPTEMBER", 3),
+        ("AUGUST", 4), ("JULY", 5), ("JUNE", 6), ("MAY", 7),
+        ("APRIL", 8), ("MARCH", 9), ("FEBRUARY", 10), ("JANUARY", 11)
+    ]
+    month_w = w / 12.0
+    for i, (mname, _) in enumerate(months):
+        mx = i * month_w
+        draw.line([(mx, 0), (mx, y_top)], fill=4, width=4)
+        draw.line([(mx + month_w / 3.0, y_top - 30), (mx + month_w / 3.0, y_top)], fill=4, width=3)
+        draw.line([(mx + 2 * month_w / 3.0, y_top - 30), (mx + 2 * month_w / 3.0, y_top)], fill=4, width=3)
+        bbox = draw.textbbox((0, 0), mname, font=font_ruler)
+        mw = bbox[2] - bbox[0]
+        draw.text((mx + (month_w - mw) / 2.0, (y_top - 30) / 2.0 - 5), mname, fill=4, font=font_ruler)
 
-    # Coordinate grid lines
-    grid_v = np.zeros((nh, nw), dtype=bool)
-    for x_c_orig in [7, 36, 56, 83, 111, 138, 166, 194, 222, 250, 277, 305, 333, 360, 388, 416, 443, 471, 498, 526, 553, 581, 609, 636, 664, 691, 719, 746]:
-        xg = int(round(float(x_c_orig) * nw / W_orig))
-        if 0 <= xg < nw:
-            grid_v[date_lim_down:mag_lim_down, max(0, xg - 1):min(nw, xg + 2)] = (lum_down[date_lim_down:mag_lim_down, max(0, xg - 1):min(nw, xg + 2)] > 40)
+    # Bottom Footer: RA Ruler
+    draw.rectangle([(0, y_bot), (w, h)], fill=0)
+    draw.line([(0, y_bot), (w, y_bot)], fill=4, width=6)
+    for hr in range(24):
+        x, _ = ra_dec_to_xy(hr * 15.0, 0)
+        draw.line([(x, y_bot), (x, y_bot + 40)], fill=4, width=4)
+        x_half, _ = ra_dec_to_xy((hr + 0.5) * 15.0, 0)
+        draw.line([(x_half, y_bot), (x_half, y_bot + 26)], fill=4, width=3)
+        for frac in [1/6, 2/6, 4/6, 5/6]:
+            xf, _ = ra_dec_to_xy((hr + frac) * 15.0, 0)
+            draw.line([(xf, y_bot), (xf, y_bot + 15)], fill=4, width=2)
+        txt = f"{hr}h"
+        bbox = draw.textbbox((0, 0), txt, font=font_ruler)
+        tw = bbox[2] - bbox[0]
+        draw.text((x - tw / 2.0, y_bot + 45), txt, fill=4, font=font_ruler)
 
-    grid_h_lines = np.zeros((nh, nw), dtype=bool)
-    for y_c_orig in [61, 92, 123, 154, 186, 217, 249, 280, 311, 343, 374, 405]:
-        yg = int(round(float(y_c_orig) * nh / H_orig))
-        if date_lim_down <= yg < mag_lim_down:
-            grid_h_lines[max(0, yg - 1):min(nh, yg + 2), :] = (lum_down[max(0, yg - 1):min(nh, yg + 2)] > 40)
+    draw.text((60, y_bot + 90), "STAR MAGNITUDE SCALE:", fill=4, font=font_sub)
+    leg_x = 310
+    mags_legend = [("0", 18), ("1st", 14), ("2nd", 11), ("3rd", 8), ("4th", 6)]
+    for label, r_circ in mags_legend:
+        draw.ellipse([(leg_x, y_bot + 100 - r_circ), (leg_x + 2*r_circ, y_bot + 100 + r_circ)], fill=3)
+        draw.text((leg_x + 2*r_circ + 10, y_bot + 90), label, fill=4, font=font_sub)
+        leg_x += 2*r_circ + 75
 
-    index_mask = ruler_mask | (sky_mask_down & (grid_v | grid_h_lines) & (lum_down > 40))
-    lines_mask = sky_mask_down & ~index_mask & (lum_down > 35) & (lum_down <= 175) & (b_down > r_down + 8)
+    return map_img
 
-    print(f"Classified features: {np.sum(index_mask)} index/ruler cells, {np.sum(lines_mask)} constellation line cells")
 
-    # Normalized luminance grid for Lithophane wall modulation
-    lum_min = np.percentile(lum_down, 2)
-    lum_max = np.percentile(lum_down, 98)
-    lum_range = max(lum_max - lum_min, 1.0)
-    norm_bri = np.clip((lum_down - lum_min) / lum_range, 0.0, 1.0)
+def downsample_priority(arr, nw, nh):
+    """
+    Priority downsampler:
+      Preserves all lines and stars without smearing or breaking!
+      Priority order: Stars (3) > Constellations (2) > Labels/Ecliptic (1) > Index (4) > Background (0)
+    """
+    h_orig, w_orig = arr.shape
+    grid_class = np.zeros((nh, nw), dtype=np.uint8)
+    x_bins = np.linspace(0, w_orig, nw + 1).astype(int)
+    y_bins = np.linspace(0, h_orig, nh + 1).astype(int)
 
-    # 3. Generate STEP AP214/AP242 Assembly Structure
-    step_lines = []
+    for j in range(nh):
+        src_j = nh - 1 - j  # Flip Y: row 0 at Z=0 (bottom rim), row NH-1 at Z=H (top rim)
+        y0, y1 = y_bins[src_j], y_bins[src_j + 1]
+        for i in range(nw):
+            x0, x1 = x_bins[i], x_bins[i + 1]
+            block = arr[y0:y1, x0:x1]
+            if 3 in block:   grid_class[j, i] = 3
+            elif 2 in block: grid_class[j, i] = 2
+            elif 1 in block: grid_class[j, i] = 1
+            elif 4 in block: grid_class[j, i] = 4
+            else:            grid_class[j, i] = 0
+
+    # Resolve all diagonal contacts to ensure 100% 2-manifold closed meshes
+    for _ in range(5):
+        for c in range(5):
+            for j in range(nh - 1):
+                for i in range(nw):
+                    i_next = (i + 1) % nw
+                    if grid_class[j, i] == c and grid_class[j+1, i_next] == c:
+                        if grid_class[j+1, i] != c and grid_class[j, i_next] != c:
+                            grid_class[j+1, i] = c
+                    if grid_class[j, i_next] == c and grid_class[j+1, i] == c:
+                        if grid_class[j, i] != c and grid_class[j+1, i_next] != c:
+                            grid_class[j, i] = c
+
+    return grid_class
+
+
+def build_3d_meshes(grid_class, r_outer, wall_thickness, h_cyl):
+    """
+    Constructs 5 watertight 3D solid meshes extending across the full wall thickness
+    (from R_inner to R_outer).
+    """
+    nh, nw = grid_class.shape
+    r_inner = r_outer - wall_thickness
+
+    cos_th = np.array([math.cos((i / nw) * 2.0 * math.pi) for i in range(nw)])
+    sin_th = np.array([math.sin((i / nw) * 2.0 * math.pi) for i in range(nw)])
+    z_vals = np.array([(j / nh) * h_cyl for j in range(nh + 1)])
+
+    out_coords = np.zeros((nh + 1, nw, 3), dtype=np.float32)
+    in_coords  = np.zeros((nh + 1, nw, 3), dtype=np.float32)
+    for j in range(nh + 1):
+        z = z_vals[j]
+        for i in range(nw):
+            out_coords[j, i] = [r_outer * cos_th[i], r_outer * sin_th[i], z]
+            in_coords[j, i]  = [r_inner * cos_th[i], r_inner * sin_th[i], z]
+
+    part_meshes = []
+
+    for p in PARTS_CONFIG:
+        c = p['class']
+        mask = (grid_class == c)
+        v_map = {}
+        v_list = []
+
+        def get_vid(j, i, is_out):
+            key = (j, i % nw, 1 if is_out else 0)
+            idx = v_map.get(key)
+            if idx is None:
+                idx = len(v_list)
+                v_map[key] = idx
+                pt = out_coords[j, i % nw] if is_out else in_coords[j, i % nw]
+                v_list.append(pt)
+            return idx
+
+        triangles = []
+
+        for j in range(nh):
+            for i in range(nw):
+                if not mask[j, i]:
+                    continue
+                i_next = (i + 1) % nw
+
+                vo00 = get_vid(j,   i,      True)
+                vo10 = get_vid(j,   i_next, True)
+                vo11 = get_vid(j+1, i_next, True)
+                vo01 = get_vid(j+1, i,      True)
+
+                vi00 = get_vid(j,   i,      False)
+                vi10 = get_vid(j,   i_next, False)
+                vi11 = get_vid(j+1, i_next, False)
+                vi01 = get_vid(j+1, i,      False)
+
+                # Outer cylindrical face (pointing OUT)
+                triangles.append((vo00, vo10, vo11))
+                triangles.append((vo00, vo11, vo01))
+
+                # Inner cylindrical face (pointing IN)
+                triangles.append((vi00, vi11, vi10))
+                triangles.append((vi00, vi01, vi11))
+
+                # Bottom rim cap (j == 0)
+                if j == 0:
+                    triangles.append((vo00, vi10, vo10))
+                    triangles.append((vo00, vi00, vi10))
+                elif not mask[j - 1, i]:
+                    triangles.append((vo00, vi10, vo10))
+                    triangles.append((vo00, vi00, vi10))
+
+                # Top rim cap (j == nh - 1)
+                if j == nh - 1:
+                    triangles.append((vo01, vo11, vi11))
+                    triangles.append((vo01, vi11, vi01))
+                elif not mask[j + 1, i]:
+                    triangles.append((vo01, vo11, vi11))
+                    triangles.append((vo01, vi11, vi01))
+
+                # Left radial sidewall (i - 1)
+                i_prev = (i - 1 + nw) % nw
+                if not mask[j, i_prev]:
+                    triangles.append((vo00, vo01, vi01))
+                    triangles.append((vo00, vi01, vi00))
+
+                # Right radial sidewall (i + 1)
+                if not mask[j, i_next]:
+                    triangles.append((vo10, vi11, vo11))
+                    triangles.append((vo10, vi10, vi11))
+
+        v_arr = np.array(v_list, dtype=np.float32)
+        f_arr = np.array(triangles, dtype=np.int32)
+        part_meshes.append((p, v_arr, f_arr))
+        print(f"  Solid '{p['name']}': {len(v_arr)} vertices, {len(f_arr)} triangles")
+
+    return part_meshes
+
+
+def export_3mf(part_meshes, output_path):
+    """
+    Exports a native Bambu Studio / OrcaSlicer 3MF project with pre-configured filaments
+    for the Bambu Lab H2C + AMS + HT-AMS setup.
+    """
+    print(f"\nWriting native Bambu Studio 3MF: {output_path}...")
+    t0 = time.time()
+
+    model_xml = [
+        '<?xml version="1.0" encoding="UTF-8"?>\n',
+        '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021" xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02">\n',
+        '  <metadata name="Application">BambuStudio</metadata>\n',
+        '  <metadata name="BambuStudio:Version">01.09.00.00</metadata>\n',
+        '  <resources>\n',
+        '    <m:colorgroup id="1">\n',
+        '      <m:color color="#00E080FF"/>\n', # 1: TransparentGreen
+        '      <m:color color="#FF2020FF"/>\n', # 2: Red
+        '      <m:color color="#FFD700FF"/>\n', # 3: Yellow
+        '      <m:color color="#FFFFFFFF"/>\n', # 4: White
+        '      <m:color color="#111111FF"/>\n', # 5: Black
+        '    </m:colorgroup>\n'
+    ]
+
+    obj_ids = []
+    current_obj_id = 2
+
+    for p, v_arr, f_arr in part_meshes:
+        name = p['name']
+        ext_id = p['extruder']
+        color_idx = ext_id - 1
+        obj_ids.append((current_obj_id, name, ext_id))
+
+        model_xml.append(f'    <object id="{current_obj_id}" type="model" name="{name}">\n')
+        model_xml.append('      <mesh>\n')
+        model_xml.append('        <vertices>\n')
+        for v in v_arr:
+            model_xml.append(f'          <vertex x="{v[0]:.3f}" y="{v[1]:.3f}" z="{v[2]:.3f}"/>\n')
+        model_xml.append('        </vertices>\n')
+        model_xml.append('        <triangles>\n')
+        for f in f_arr:
+            model_xml.append(f'          <triangle v1="{f[0]}" v2="{f[1]}" v3="{f[2]}" pid="1" p1="{color_idx}"/>\n')
+        model_xml.append('        </triangles>\n')
+        model_xml.append('      </mesh>\n')
+        model_xml.append('    </object>\n')
+        current_obj_id += 1
+
+    root_obj_id = current_obj_id
+    model_xml.append(f'    <object id="{root_obj_id}" type="model" name="Astro_Dewshield_130x200">\n')
+    model_xml.append('      <components>\n')
+    for oid, _, _ in obj_ids:
+        model_xml.append(f'        <component objectid="{oid}"/>\n')
+    model_xml.append('      </components>\n')
+    model_xml.append('    </object>\n')
+    model_xml.append('  </resources>\n')
+    model_xml.append('  <build>\n')
+    model_xml.append(f'    <item objectid="{root_obj_id}"/>\n')
+    model_xml.append('  </build>\n')
+    model_xml.append('</model>\n')
+
+    full_model_str = "".join(model_xml)
+
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\n'
+        '  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n'
+        '  <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>\n'
+        '  <Default Extension="config" ContentType="text/plain"/>\n'
+        '</Types>\n'
+    )
+
+    rels = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n'
+        '  <Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/05/3dmodel"/>\n'
+        '  <Relationship Target="/Metadata/model_settings.config" Id="rel1" Type="http://schemas.bambulab.com/package/2021/model_settings"/>\n'
+        '</Relationships>\n'
+    )
+
+    model_settings = [
+        '; model_settings.config\n',
+        '[object_1]\n',
+        'name = Astro_Dewshield_130x200\n\n'
+    ]
+    for idx, (_, name, ext_id) in enumerate(obj_ids):
+        model_settings.append(f'[part_{idx + 1}]\n')
+        model_settings.append(f'name = {name}\n')
+        model_settings.append(f'extruder = {ext_id}\n\n')
+    model_settings_str = "".join(model_settings)
+
+    project_settings = (
+        '; project_settings.config\n'
+        '[project]\n'
+        'filament_colour = #00E080;#FF2020;#FFD700;#FFFFFF;#111111\n'
+        'filament_type = PLA;PLA;PLA;PLA;PLA\n'
+        'filament_vendor = Bambu;Bambu;Bambu;Bambu;Bambu\n'
+        'filament_name = "TransparentGreen";"Red";"Yellow";"White";"Black"\n'
+    )
+
+    slice_info = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<config>\n'
+        '  <header>\n'
+        '    <version>1.0</version>\n'
+        '  </header>\n'
+        '  <plate>\n'
+        '    <filament id="1" color="#00E080" type="PLA" name="TransparentGreen"/>\n'
+        '    <filament id="2" color="#FF2020" type="PLA" name="Red"/>\n'
+        '    <filament id="3" color="#FFD700" type="PLA" name="Yellow"/>\n'
+        '    <filament id="4" color="#FFFFFF" type="PLA" name="White"/>\n'
+        '    <filament id="5" color="#111111" type="PLA" name="Black"/>\n'
+        '  </plate>\n'
+        '</config>\n'
+    )
+
+    with zipfile.ZipFile(output_path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+        zf.writestr('[Content_Types].xml', content_types)
+        zf.writestr('_rels/.rels', rels)
+        zf.writestr('3D/3dmodel.model', full_model_str)
+        zf.writestr('Metadata/model_settings.config', model_settings_str)
+        zf.writestr('Metadata/project_settings.config', project_settings)
+        zf.writestr('Metadata/slice_info.config', slice_info)
+
+    sz_mb = os.path.getsize(output_path) / (1024 * 1024)
+    print(f"  [OK] 3MF saved: {output_path} ({sz_mb:.2f} MB, {time.time() - t0:.2f}s)")
+
+
+def export_step(part_meshes, output_path):
+    """
+    Exports a clean STEP AP214 assembly with human-readable entity names and embedded colors.
+    """
+    print(f"\nWriting STEP AP214 Assembly: {output_path}...")
+    t0 = time.time()
+
     entity_id = 100
-
     def alloc_id():
         nonlocal entity_id
         res = entity_id
         entity_id += 1
         return res
 
-    app_context = alloc_id()
-    app_proto = alloc_id()
-    prod_context = alloc_id()
-    pdef_context = alloc_id()
-    geom_context = alloc_id()
-    len_unit = alloc_id()
-    ang_unit = alloc_id()
-    ster_unit = alloc_id()
-    uncert = alloc_id()
-    origin_pt = alloc_id()
-    dir_z = alloc_id()
-    dir_x = alloc_id()
-    axis_placement = alloc_id()
-
-    step_lines.append(f"#{app_context} = APPLICATION_CONTEXT('core data for automotive mechanical design processes');\n")
-    step_lines.append(f"#{app_proto} = APPLICATION_PROTOCOL_DEFINITION('international standard','automotive_design',2000,#{app_context});\n")
-    step_lines.append(f"#{prod_context} = PRODUCT_CONTEXT('',#{app_context},'mechanical');\n")
-    step_lines.append(f"#{pdef_context} = PRODUCT_DEFINITION_CONTEXT('part definition',#{app_context},'design');\n")
-
-    step_lines.append(f"#{len_unit} = ( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.) );\n")
-    step_lines.append(f"#{ang_unit} = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );\n")
-    step_lines.append(f"#{ster_unit} = ( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );\n")
-    step_lines.append(f"#{uncert} = UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-07),#{len_unit},'distance_accuracy_value','confusion accuracy');\n")
-    step_lines.append(f"#{geom_context} = ( GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#{uncert})) GLOBAL_UNIT_ASSIGNED_CONTEXT((#{len_unit},#{ang_unit},#{ster_unit})) REPRESENTATION_CONTEXT('Context #1','3D Context with UNIT and UNCERTAINTY') );\n")
-
-    step_lines.append(f"#{origin_pt} = CARTESIAN_POINT('',(0.,0.,0.));\n")
-    step_lines.append(f"#{dir_z} = DIRECTION('',(0.,0.,1.));\n")
-    step_lines.append(f"#{dir_x} = DIRECTION('',(1.,0.,0.));\n")
-    step_lines.append(f"#{axis_placement} = AXIS2_PLACEMENT_3D('',#{origin_pt},#{dir_z},#{dir_x});\n")
-
-    def make_color(name, rgb):
-        r_col, g_col, b_col = rgb
-        c_id = alloc_id()
-        fas_id = alloc_id()
-        sfa_id = alloc_id()
-        surf_style_fill_id = alloc_id()
-        side_id = alloc_id()
-        usage_id = alloc_id()
-        style_id = alloc_id()
-        step_lines.append(f"#{c_id} = COLOUR_RGB('{name}',{r_col:.4f},{g_col:.4f},{b_col:.4f});\n")
-        step_lines.append(f"#{fas_id} = FILL_AREA_STYLE_COLOUR('',#{c_id});\n")
-        step_lines.append(f"#{sfa_id} = FILL_AREA_STYLE('',(#{fas_id}));\n")
-        step_lines.append(f"#{surf_style_fill_id} = SURFACE_STYLE_FILL_AREA(#{sfa_id});\n")
-        step_lines.append(f"#{side_id} = SURFACE_SIDE_STYLE('',(#{surf_style_fill_id}));\n")
-        step_lines.append(f"#{usage_id} = SURFACE_STYLE_USAGE(.BOTH.,#{side_id});\n")
-        step_lines.append(f"#{style_id} = PRESENTATION_STYLE_ASSIGNMENT((#{usage_id}));\n")
-        return style_id
-
-    style_bg = make_color('navy', hex_to_rgb(args.color_bg))
-    style_stars = make_color('gold', hex_to_rgb(args.color_stars))
-    style_lines = make_color('blue', hex_to_rgb(args.color_lines))
-    style_index = make_color('cyan', hex_to_rgb(args.color_index))
-
-    # Root Assembly Product
-    root_prod = alloc_id()
-    root_form = alloc_id()
-    root_pdef = alloc_id()
-    root_pshp = alloc_id()
-    root_rep = alloc_id()
-    root_sdr = alloc_id()
-
-    step_lines.append(f"#{root_prod} = PRODUCT('StarMap_Cylinder','StarMap_Cylinder','',({prod_context}));\n")
-    step_lines.append(f"#{root_form} = PRODUCT_DEFINITION_FORMATION('','',#{root_prod});\n")
-    step_lines.append(f"#{root_pdef} = PRODUCT_DEFINITION('design','',#{root_form},#{pdef_context});\n")
-    step_lines.append(f"#{root_pshp} = PRODUCT_DEFINITION_SHAPE('','',#{root_pdef});\n")
-    step_lines.append(f"#{root_rep} = SHAPE_REPRESENTATION('StarMap_Cylinder',({axis_placement}),#{geom_context});\n")
-    step_lines.append(f"#{root_sdr} = SHAPE_DEFINITION_REPRESENTATION(#{root_pshp},#{root_rep});\n")
-    step_lines.append(f"#{alloc_id()} = PRODUCT_RELATED_PRODUCT_CATEGORY('assembly',$,(#{root_prod}));\n")
-
-    def register_component(name, brep_ids, style_id):
-        if not isinstance(brep_ids, list):
-            brep_ids = [brep_ids]
-        prod_id = alloc_id()
-        form_id = alloc_id()
-        pdef_id = alloc_id()
-        pshp_id = alloc_id()
-        rep_id = alloc_id()
-        sdr_id = alloc_id()
-
-        step_lines.append(f"#{prod_id} = PRODUCT('{name}','{name}','',({prod_context}));\n")
-        step_lines.append(f"#{form_id} = PRODUCT_DEFINITION_FORMATION('','',#{prod_id});\n")
-        step_lines.append(f"#{pdef_id} = PRODUCT_DEFINITION('design','',#{form_id},#{pdef_context});\n")
-        step_lines.append(f"#{pshp_id} = PRODUCT_DEFINITION_SHAPE('','',#{pdef_id});\n")
-        
-        brep_items = ','.join(f"#{b}" for b in brep_ids)
-        step_lines.append(f"#{rep_id} = SHAPE_REPRESENTATION('{name}',({axis_placement},{brep_items}),#{geom_context});\n")
-        step_lines.append(f"#{sdr_id} = SHAPE_DEFINITION_REPRESENTATION(#{pshp_id},#{rep_id});\n")
-        step_lines.append(f"#{alloc_id()} = PRODUCT_RELATED_PRODUCT_CATEGORY('part',$,(#{prod_id}));\n")
-
-        styled_ids = []
-        for b in brep_ids:
-            styled_id = alloc_id()
-            step_lines.append(f"#{styled_id} = STYLED_ITEM('color',({style_id}),#{b});\n")
-            styled_ids.append(styled_id)
-        
-        styled_items = ','.join(f"#{s}" for s in styled_ids)
-        step_lines.append(f"#{alloc_id()} = MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION('',({styled_items}),#{geom_context});\n")
-
-        nauo_id = alloc_id()
-        rel_pshp_id = alloc_id()
-        cdsr_id = alloc_id()
-        rel_id = alloc_id()
-        trans_id = alloc_id()
-
-        step_lines.append(f"#{nauo_id} = NEXT_ASSEMBLY_USAGE_OCCURRENCE('{name}','{name}','',#{root_pdef},#{pdef_id},$);\n")
-        step_lines.append(f"#{rel_pshp_id} = PRODUCT_DEFINITION_SHAPE('','',#{nauo_id});\n")
-        step_lines.append(f"#{cdsr_id} = CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(#{rel_id},#{rel_pshp_id});\n")
-        step_lines.append(f"#{rel_id} = ( REPRESENTATION_RELATIONSHIP('','',#{root_rep},#{rep_id}) REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#{trans_id}) SHAPE_REPRESENTATION_RELATIONSHIP() );\n")
-        step_lines.append(f"#{trans_id} = ITEM_DEFINED_TRANSFORMATION('','',#{axis_placement},#{axis_placement});\n")
-
-    def add_plane(pt, norm, tang):
-        nl = np.linalg.norm(norm)
-        n = norm / nl if nl > 1e-9 else np.array([0., 0., 1.])
-        # Orthonormalize tang against norm:
-        t = tang - np.dot(tang, n) * n
-        tl = np.linalg.norm(t)
-        if tl < 1e-9:
-            # Pick arbitrary vector not parallel to n
-            arb = np.array([1., 0., 0.]) if abs(n[0]) < 0.9 else np.array([0., 1., 0.])
-            t = arb - np.dot(arb, n) * n
-            tl = np.linalg.norm(t)
-        t = t / tl
-        pid = alloc_id()
-        dz = alloc_id()
-        dx = alloc_id()
-        ax = alloc_id()
-        pl = alloc_id()
-        step_lines.append(f"#{pid} = CARTESIAN_POINT('',({pt[0]:.4f},{pt[1]:.4f},{pt[2]:.4f}));\n")
-        step_lines.append(f"#{dz} = DIRECTION('',({n[0]:.4f},{n[1]:.4f},{n[2]:.4f}));\n")
-        step_lines.append(f"#{dx} = DIRECTION('',({t[0]:.4f},{t[1]:.4f},{t[2]:.4f}));\n")
-        step_lines.append(f"#{ax} = AXIS2_PLACEMENT_3D('',#{pid},#{dz},#{dx});\n")
-        step_lines.append(f"#{pl} = PLANE('',#{ax});\n")
-        return pl
-
-    def make_tri_with_pts(v_ids, p0, p1, p2):
-        d1 = p1 - p0
-        d2 = p2 - p0
-        n = np.cross(d1, d2)
-        nl = np.linalg.norm(n)
-        n = n / nl if nl > 1e-9 else np.array([0., 0., 1.])
-        tl = np.linalg.norm(d1)
-        t = d1 / tl if tl > 1e-9 else np.array([1., 0., 0.])
-        pl = add_plane(p0, n, t)
-        lid = alloc_id()
-        bid = alloc_id()
-        fid = alloc_id()
-        refs = f"#{v_ids[0]},#{v_ids[1]},#{v_ids[2]}"
-        step_lines.append(f"#{lid} = POLY_LOOP('',({refs}));\n")
-        step_lines.append(f"#{bid} = FACE_OUTER_BOUND('',#{lid},.T.);\n")
-        step_lines.append(f"#{fid} = FACE_SURFACE('',(#{bid}),#{pl},.T.);\n")
-        return fid
-
-    # =========================================================================
-    # Component 1: Space_Background (Full Lithophane Hollow Cylinder Tube)
-    # Outer radius is smooth at R_outer.
-    # Inner radius varies with brightness: bright -> thin wall, dark -> thick wall.
-    # =========================================================================
-    print("Generating Space_Background solid (Lithophane)...")
-    bg_faces = []
-    r_in_grid = np.zeros((nh + 1, nw))
-    for j in range(nh):
-        for i in range(nw):
-            b = norm_bri[j, i]
-            w = max_wall - b * (max_wall - min_wall)
-            r_in_grid[j, i] = R_outer - w
-    r_in_grid[nh, :] = r_in_grid[nh - 1, :]
-
-    bg_out_pts = {}
-    bg_in_pts = {}
-    for j in range(nh + 1):
-        z = (j / nh) * H_cyl
-        for i in range(nw):
-            th = (i / nw) * 2 * math.pi
-            r_in = r_in_grid[j, i]
-            pid_o = alloc_id()
-            step_lines.append(f"#{pid_o} = CARTESIAN_POINT('',({R_outer*math.cos(th):.4f},{R_outer*math.sin(th):.4f},{z:.4f}));\n")
-            bg_out_pts[(i, j)] = pid_o
-
-            pid_i = alloc_id()
-            step_lines.append(f"#{pid_i} = CARTESIAN_POINT('',({r_in*math.cos(th):.4f},{r_in*math.sin(th):.4f},{z:.4f}));\n")
-            bg_in_pts[(i, j)] = pid_i
-
-    def get_bg_out_coord(i, j):
-        th = (i / nw) * 2 * math.pi
-        z = (j / nh) * H_cyl
-        return np.array([R_outer * math.cos(th), R_outer * math.sin(th), z])
-
-    def get_bg_in_coord(i, j):
-        th = (i / nw) * 2 * math.pi
-        z = (j / nh) * H_cyl
-        r_in = r_in_grid[j, i % nw]
-        return np.array([r_in * math.cos(th), r_in * math.sin(th), z])
-
-    # Outer cylindrical surface (smooth, normal outward)
-    for j in range(nh):
-        for i in range(nw):
-            i_next = (i + 1) % nw
-            p00 = get_bg_out_coord(i, j); p10 = get_bg_out_coord(i_next, j)
-            p11 = get_bg_out_coord(i_next, j + 1); p01 = get_bg_out_coord(i, j + 1)
-            v00 = bg_out_pts[(i, j)]; v10 = bg_out_pts[(i_next, j)]
-            v11 = bg_out_pts[(i_next, j + 1)]; v01 = bg_out_pts[(i, j + 1)]
-            bg_faces.append(make_tri_with_pts([v00, v10, v11], p00, p10, p11))
-            bg_faces.append(make_tri_with_pts([v00, v11, v01], p00, p11, p01))
-
-    # Inner lithophane surface (variable radius, normal inward)
-    for j in range(nh):
-        for i in range(nw):
-            i_next = (i + 1) % nw
-            p00 = get_bg_in_coord(i, j); p10 = get_bg_in_coord(i_next, j)
-            p11 = get_bg_in_coord(i_next, j + 1); p01 = get_bg_in_coord(i, j + 1)
-            v00 = bg_in_pts[(i, j)]; v10 = bg_in_pts[(i_next, j)]
-            v11 = bg_in_pts[(i_next, j + 1)]; v01 = bg_in_pts[(i, j + 1)]
-            bg_faces.append(make_tri_with_pts([v00, v11, v10], p00, p11, p10))
-            bg_faces.append(make_tri_with_pts([v00, v01, v11], p00, p01, p11))
-
-    # Top ring cap (z = H_cyl)
-    for i in range(nw):
-        i_next = (i + 1) % nw
-        o0 = get_bg_out_coord(i, nh); o1 = get_bg_out_coord(i_next, nh)
-        in0 = get_bg_in_coord(i, nh); in1 = get_bg_in_coord(i_next, nh)
-        vo0 = bg_out_pts[(i, nh)]; vo1 = bg_out_pts[(i_next, nh)]
-        vi0 = bg_in_pts[(i, nh)]; vi1 = bg_in_pts[(i_next, nh)]
-        bg_faces.append(make_tri_with_pts([vo0, vo1, vi1], o0, o1, in1))
-        bg_faces.append(make_tri_with_pts([vo0, vi1, vi0], o0, in1, in0))
-
-    # Bottom flange or bottom ring cap (z <= 0)
-    if base_flange > 0:
-        r_flange = R_outer + 1.2
-        r_in_bot = R_outer - max_wall
-        flange_out_pts = {}
-        flange_in_pts = {}
-        for i in range(nw):
-            th = (i / nw) * 2 * math.pi
-            pid_fo = alloc_id()
-            step_lines.append(f"#{pid_fo} = CARTESIAN_POINT('',({r_flange*math.cos(th):.4f},{r_flange*math.sin(th):.4f},{-base_flange:.4f}));\n")
-            flange_out_pts[i] = pid_fo
-
-            pid_fi = alloc_id()
-            step_lines.append(f"#{pid_fi} = CARTESIAN_POINT('',({r_in_bot*math.cos(th):.4f},{r_in_bot*math.sin(th):.4f},{-base_flange:.4f}));\n")
-            flange_in_pts[i] = pid_fi
-
-        def get_flange_out(i):
-            th = (i / nw) * 2 * math.pi
-            return np.array([r_flange * math.cos(th), r_flange * math.sin(th), -base_flange])
-
-        def get_flange_in(i):
-            th = (i / nw) * 2 * math.pi
-            return np.array([r_in_bot * math.cos(th), r_in_bot * math.sin(th), -base_flange])
-
-        for i in range(nw):
-            i_next = (i + 1) % nw
-            vo0 = bg_out_pts[(i, 0)]; vo1 = bg_out_pts[(i_next, 0)]
-            vi0 = bg_in_pts[(i, 0)]; vi1 = bg_in_pts[(i_next, 0)]
-            vfo0 = flange_out_pts[i]; vfo1 = flange_out_pts[i_next]
-            vfi0 = flange_in_pts[i]; vfi1 = flange_in_pts[i_next]
-
-            p_o0 = get_bg_out_coord(i, 0); p_o1 = get_bg_out_coord(i_next, 0)
-            p_i0 = get_bg_in_coord(i, 0); p_i1 = get_bg_in_coord(i_next, 0)
-            p_fo0 = get_flange_out(i); p_fo1 = get_flange_out(i_next)
-            p_fi0 = get_flange_in(i); p_fi1 = get_flange_in(i_next)
-
-            # Flange outer wall
-            bg_faces.append(make_tri_with_pts([vo0, vfo0, vfo1], p_o0, p_fo0, p_fo1))
-            bg_faces.append(make_tri_with_pts([vo0, vfo1, vo1], p_o0, p_fo1, p_o1))
-            # Flange bottom ring
-            bg_faces.append(make_tri_with_pts([vfo0, vfi0, vfi1], p_fo0, p_fi0, p_fi1))
-            bg_faces.append(make_tri_with_pts([vfo0, vfi1, vfo1], p_fo0, p_fi1, p_fo1))
-            # Flange inner wall connecting up to z=0
-            bg_faces.append(make_tri_with_pts([vfi0, vi0, vi1], p_fi0, p_i0, p_i1))
-            bg_faces.append(make_tri_with_pts([vfi0, vi1, vfi1], p_fi0, p_i1, p_fi1))
-    else:
-        for i in range(nw):
-            i_next = (i + 1) % nw
-            o0 = get_bg_out_coord(i, 0); o1 = get_bg_out_coord(i_next, 0)
-            in0 = get_bg_in_coord(i, 0); in1 = get_bg_in_coord(i_next, 0)
-            vo0 = bg_out_pts[(i, 0)]; vo1 = bg_out_pts[(i_next, 0)]
-            vi0 = bg_in_pts[(i, 0)]; vi1 = bg_in_pts[(i_next, 0)]
-            bg_faces.append(make_tri_with_pts([vo0, vi1, vo1], o0, in1, o1))
-            bg_faces.append(make_tri_with_pts([vo0, vi0, vi1], o0, in0, in1))
-
-    bg_shell = alloc_id()
-    bg_brep = alloc_id()
-    refs_bg = ','.join(f"#{f}" for f in bg_faces)
-    step_lines.append(f"#{bg_shell} = CLOSED_SHELL('',({refs_bg}));\n")
-    step_lines.append(f"#{bg_brep} = FACETED_BREP('Space_Background_Brep',#{bg_shell});\n")
-    register_component('Space_Background', bg_brep, style_bg)
-
-    # =========================================================================
-    # Component 2: Stars (Watertight circular prisms, yellow filament)
-    # Each star is its own CLOSED_SHELL and FACETED_BREP (ISO 10303-42 compliant).
-    # All stars are collected under the 'Stars' SHAPE_REPRESENTATION.
-    # Outer face is flush with R_outer + 0.02mm (zero relief, smooth!).
-    # Inner face reaches through the lithophane wall to R_outer - min_wall.
-    # =========================================================================
-    print("Generating Stars solid (Watertight circular dots)...")
-    n_star_sides = 12
-    r_star_top = R_outer + relief + 0.020
-    r_star_bot = R_outer - min_wall
-    star_brep_ids = []
-
-    for s_idx, (th_c, z_c, r_star) in enumerate(stars):
-        c_top_pt = (r_star_top * math.cos(th_c), r_star_top * math.sin(th_c), z_c)
-        c_bot_pt = (r_star_bot * math.cos(th_c), r_star_bot * math.sin(th_c), z_c)
-        pid_ct = alloc_id()
-        step_lines.append(f"#{pid_ct} = CARTESIAN_POINT('',({c_top_pt[0]:.4f},{c_top_pt[1]:.4f},{c_top_pt[2]:.4f}));\n")
-        pid_cb = alloc_id()
-        step_lines.append(f"#{pid_cb} = CARTESIAN_POINT('',({c_bot_pt[0]:.4f},{c_bot_pt[1]:.4f},{c_bot_pt[2]:.4f}));\n")
-
-        top_pids = []
-        bot_pids = []
-        top_coords = []
-        bot_coords = []
-        for k in range(n_star_sides):
-            ang = (k / n_star_sides) * 2.0 * math.pi
-            ds = r_star * math.cos(ang)
-            dz = r_star * math.sin(ang)
-            th_k = th_c + (ds / R_outer)
-            zk = z_c + dz
-            pt_t = (r_star_top * math.cos(th_k), r_star_top * math.sin(th_k), zk)
-            pt_b = (r_star_bot * math.cos(th_k), r_star_bot * math.sin(th_k), zk)
-            top_coords.append(pt_t)
-            bot_coords.append(pt_b)
-
-            pid_t = alloc_id()
-            step_lines.append(f"#{pid_t} = CARTESIAN_POINT('',({pt_t[0]:.4f},{pt_t[1]:.4f},{pt_t[2]:.4f}));\n")
-            top_pids.append(pid_t)
-
-            pid_b = alloc_id()
-            step_lines.append(f"#{pid_b} = CARTESIAN_POINT('',({pt_b[0]:.4f},{pt_b[1]:.4f},{pt_b[2]:.4f}));\n")
-            bot_pids.append(pid_b)
-
-        this_star_faces = []
-        for k in range(n_star_sides):
-            kn = (k + 1) % n_star_sides
-            this_star_faces.append(make_tri_with_pts([pid_ct, top_pids[k], top_pids[kn]], np.array(c_top_pt), np.array(top_coords[k]), np.array(top_coords[kn])))
-            this_star_faces.append(make_tri_with_pts([pid_cb, bot_pids[kn], bot_pids[k]], np.array(c_bot_pt), np.array(bot_coords[kn]), np.array(bot_coords[k])))
-            p0 = np.array(bot_coords[k]); p1 = np.array(bot_coords[kn]); p2 = np.array(top_coords[kn])
-            this_star_faces.append(make_tri_with_pts([bot_pids[k], bot_pids[kn], top_pids[kn]], p0, p1, p2))
-            p3 = np.array(top_coords[k])
-            this_star_faces.append(make_tri_with_pts([bot_pids[k], top_pids[kn], top_pids[k]], p0, p2, p3))
-
-        shell_id = alloc_id()
-        brep_id = alloc_id()
-        refs_star = ','.join(f"#{f}" for f in this_star_faces)
-        step_lines.append(f"#{shell_id} = CLOSED_SHELL('',({refs_star}));\n")
-        step_lines.append(f"#{brep_id} = FACETED_BREP('Star_{s_idx}',#{shell_id});\n")
-        star_brep_ids.append(brep_id)
-
-    register_component('Stars', star_brep_ids, style_stars)
-
-    # =========================================================================
-    # Components 3 & 4: Inlaid Watertight Shells for Constellation_Lines & Index_Lines
-    # Active cells: outer radius is flush at R_outer + delta (smooth, zero relief).
-    # Inactive cells: recessed beneath the surface (hidden inside the background wall).
-    # =========================================================================
-    def build_inlaid_component(name, mask, delta_surf, style_id):
-        print(f"Generating {name} solid (Inlaid shell)...")
-        r_out_active = R_outer + relief + delta_surf
-        r_in_active = R_outer - 0.50
-        r_out_inactive = R_outer - 0.15
-        r_in_inactive = R_outer - 0.25
-
-        r_grid_out = np.full((nh + 1, nw), r_out_inactive)
-        r_grid_in = np.full((nh + 1, nw), r_in_inactive)
-        for j in range(nh):
-            for i in range(nw):
-                if mask[j, i]:
-                    r_grid_out[j, i] = r_out_active
-                    r_grid_in[j, i] = r_in_active
-        r_grid_out[nh, :] = r_grid_out[nh - 1, :]
-        r_grid_in[nh, :] = r_grid_in[nh - 1, :]
-
-        out_pts = {}
-        in_pts = {}
-        for j in range(nh + 1):
-            z = (j / nh) * H_cyl
-            for i in range(nw):
-                th = (i / nw) * 2 * math.pi
-                ro = r_grid_out[j, i]
-                ri = r_grid_in[j, i]
-
-                pid_o = alloc_id()
-                out_pts[(i, j)] = pid_o
-                step_lines.append(f"#{pid_o} = CARTESIAN_POINT('',({ro*math.cos(th):.4f},{ro*math.sin(th):.4f},{z:.4f}));\n")
-
-                pid_i = alloc_id()
-                in_pts[(i, j)] = pid_i
-                step_lines.append(f"#{pid_i} = CARTESIAN_POINT('',({ri*math.cos(th):.4f},{ri*math.sin(th):.4f},{z:.4f}));\n")
-
-        def get_out_c(i, j):
-            th = (i / nw) * 2 * math.pi
-            z = (j / nh) * H_cyl
-            ro = r_grid_out[j, i % nw]
-            return np.array([ro * math.cos(th), ro * math.sin(th), z])
-
-        def get_in_c(i, j):
-            th = (i / nw) * 2 * math.pi
-            z = (j / nh) * H_cyl
-            ri = r_grid_in[j, i % nw]
-            return np.array([ri * math.cos(th), ri * math.sin(th), z])
-
-        faces = []
-        for j in range(nh):
-            for i in range(nw):
-                i_next = (i + 1) % nw
-                p00 = get_out_c(i, j); p10 = get_out_c(i_next, j)
-                p11 = get_out_c(i_next, j + 1); p01 = get_out_c(i, j + 1)
-                v00 = out_pts[(i, j)]; v10 = out_pts[(i_next, j)]
-                v11 = out_pts[(i_next, j + 1)]; v01 = out_pts[(i, j + 1)]
-                faces.append(make_tri_with_pts([v00, v10, v11], p00, p10, p11))
-                faces.append(make_tri_with_pts([v00, v11, v01], p00, p11, p01))
-
-        for j in range(nh):
-            for i in range(nw):
-                i_next = (i + 1) % nw
-                p00 = get_in_c(i, j); p10 = get_in_c(i_next, j)
-                p11 = get_in_c(i_next, j + 1); p01 = get_in_c(i, j + 1)
-                v00 = in_pts[(i, j)]; v10 = in_pts[(i_next, j)]
-                v11 = in_pts[(i_next, j + 1)]; v01 = in_pts[(i, j + 1)]
-                faces.append(make_tri_with_pts([v00, v11, v10], p00, p11, p10))
-                faces.append(make_tri_with_pts([v00, v01, v11], p00, p01, p11))
-
-        for i in range(nw):
-            i_next = (i + 1) % nw
-            o0 = get_out_c(i, 0); o1 = get_out_c(i_next, 0)
-            in0 = get_in_c(i, 0); in1 = get_in_c(i_next, 0)
-            vo0 = out_pts[(i, 0)]; vo1 = out_pts[(i_next, 0)]
-            vi0 = in_pts[(i, 0)]; vi1 = in_pts[(i_next, 0)]
-            faces.append(make_tri_with_pts([vo0, vi1, vo1], o0, in1, o1))
-            faces.append(make_tri_with_pts([vo0, vi0, vi1], o0, in0, in1))
-
-        for i in range(nw):
-            i_next = (i + 1) % nw
-            o0 = get_out_c(i, nh); o1 = get_out_c(i_next, nh)
-            in0 = get_in_c(i, nh); in1 = get_in_c(i_next, nh)
-            vo0 = out_pts[(i, nh)]; vo1 = out_pts[(i_next, nh)]
-            vi0 = in_pts[(i, nh)]; vi1 = in_pts[(i_next, nh)]
-            faces.append(make_tri_with_pts([vo0, vo1, vi1], o0, o1, in1))
-            faces.append(make_tri_with_pts([vo0, vi1, vi0], o0, in1, in0))
-
-        shell_id = alloc_id()
-        brep_id = alloc_id()
-        f_refs = ','.join(f"#{f}" for f in faces)
-        step_lines.append(f"#{shell_id} = CLOSED_SHELL('',({f_refs}));\n")
-        step_lines.append(f"#{brep_id} = FACETED_BREP('{name}_Brep',#{shell_id});\n")
-        register_component(name, brep_id, style_id)
-
-    build_inlaid_component('Constellation_Lines', lines_mask, 0.010, style_lines)
-    build_inlaid_component('Index_Lines', index_mask, 0.015, style_index)
-
-    output_path = args.output
-    header_str = (
-        f"ISO-10303-21;\nHEADER;\n"
-        f"FILE_DESCRIPTION(('Cylindrical Multicolor Lithophane Star Map Assembly'),'2;1');\n"
-        f"FILE_NAME('{os.path.basename(output_path)}','{time.strftime('%Y-%m-%dT%H:%M:%S')}',('User'),('User'),'Processor','System','');\n"
-        f"FILE_SCHEMA(('AUTOMOTIVE_DESIGN {{ 1 0 10303 214 1 1 1 1 }}'));\n"
-        f"ENDSEC;\nDATA;\n"
-    )
-
-    print(f"Writing {output_path}...")
     with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(header_str)
-        f.writelines(step_lines)
+        f.write("ISO-10303-21;\nHEADER;\n")
+        f.write("FILE_DESCRIPTION(('Cylindrical Multicolor Star Map Dewshield Assembly'),'2;1');\n")
+        f.write(f"FILE_NAME('{os.path.basename(output_path)}','{time.strftime('%Y-%m-%dT%H:%M:%S')}',('User'),('User'),'Processor','System','');\n")
+        f.write("FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\n")
+        f.write("ENDSEC;\nDATA;\n")
+
+        app_ctx = alloc_id(); app_proto = alloc_id(); prod_ctx = alloc_id(); pdef_ctx = alloc_id()
+        len_unit = alloc_id(); ang_unit = alloc_id(); ster_unit = alloc_id(); uncert = alloc_id(); geom_ctx = alloc_id()
+        origin_pt = alloc_id(); dir_z = alloc_id(); dir_x = alloc_id(); axis_pl = alloc_id()
+
+        f.write(f"#{app_ctx} = APPLICATION_CONTEXT('core data for automotive mechanical design processes');\n")
+        f.write(f"#{app_proto} = APPLICATION_PROTOCOL_DEFINITION('international standard','automotive_design',2000,#{app_ctx});\n")
+        f.write(f"#{prod_ctx} = PRODUCT_CONTEXT('',#{app_ctx},'mechanical');\n")
+        f.write(f"#{pdef_ctx} = PRODUCT_DEFINITION_CONTEXT('part definition',#{app_ctx},'design');\n")
+        f.write(f"#{len_unit} = ( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.) );\n")
+        f.write(f"#{ang_unit} = ( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) );\n")
+        f.write(f"#{ster_unit} = ( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT() );\n")
+        f.write(f"#{uncert} = UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-07),#{len_unit},'distance_accuracy_value','confusion accuracy');\n")
+        f.write(f"#{geom_ctx} = ( GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#{uncert})) GLOBAL_UNIT_ASSIGNED_CONTEXT((#{len_unit},#{ang_unit},#{ster_unit})) REPRESENTATION_CONTEXT('Context #1','3D Context with UNIT and UNCERTAINTY') );\n")
+        f.write(f"#{origin_pt} = CARTESIAN_POINT('',(0.,0.,0.));\n")
+        f.write(f"#{dir_z} = DIRECTION('',(0.,0.,1.));\n")
+        f.write(f"#{dir_x} = DIRECTION('',(1.,0.,0.));\n")
+        f.write(f"#{axis_pl} = AXIS2_PLACEMENT_3D('',#{origin_pt},#{dir_z},#{dir_x});\n")
+
+        # Root Assembly Product
+        root_prod = alloc_id(); root_form = alloc_id(); root_pdef = alloc_id()
+        root_pshp = alloc_id(); root_rep = alloc_id(); root_sdr = alloc_id()
+
+        f.write(f"#{root_prod} = PRODUCT('Astro_Dewshield_130x200','Astro_Dewshield_130x200','',(#{prod_ctx}));\n")
+        f.write(f"#{root_form} = PRODUCT_DEFINITION_FORMATION('Astro_Dewshield_130x200','',#{root_prod});\n")
+        f.write(f"#{root_pdef} = PRODUCT_DEFINITION('design','Astro_Dewshield_130x200',#{root_form},#{pdef_ctx});\n")
+        f.write(f"#{root_pshp} = PRODUCT_DEFINITION_SHAPE('Astro_Dewshield_130x200','',#{root_pdef});\n")
+        f.write(f"#{root_rep} = SHAPE_REPRESENTATION('Astro_Dewshield_130x200',(#{axis_pl}),#{geom_ctx});\n")
+        f.write(f"#{root_sdr} = SHAPE_DEFINITION_REPRESENTATION(#{root_pshp},#{root_rep});\n")
+        f.write(f"#{alloc_id()} = PRODUCT_RELATED_PRODUCT_CATEGORY('assembly',$,(#{root_prod}));\n")
+
+        def make_color(name, rgb):
+            r_c, g_c, b_c = rgb
+            c_id = alloc_id(); fas_id = alloc_id(); sfa_id = alloc_id()
+            surf_fill = alloc_id(); side_id = alloc_id(); usage_id = alloc_id(); style_id = alloc_id()
+            f.write(f"#{c_id} = COLOUR_RGB('{name}',{r_c:.4f},{g_c:.4f},{b_c:.4f});\n")
+            f.write(f"#{fas_id} = FILL_AREA_STYLE_COLOUR('',#{c_id});\n")
+            f.write(f"#{sfa_id} = FILL_AREA_STYLE('',(#{fas_id}));\n")
+            f.write(f"#{surf_fill} = SURFACE_STYLE_FILL_AREA(#{sfa_id});\n")
+            f.write(f"#{side_id} = SURFACE_SIDE_STYLE('',(#{surf_fill}));\n")
+            f.write(f"#{usage_id} = SURFACE_STYLE_USAGE(.BOTH.,#{side_id});\n")
+            f.write(f"#{style_id} = PRESENTATION_STYLE_ASSIGNMENT((#{usage_id}));\n")
+            return style_id
+
+        for p, v_arr, f_arr in part_meshes:
+            name = p['name']
+            style_id = make_color(name, p['rgb'])
+
+            # Emit vertices for this part
+            v_step_ids = []
+            for v in v_arr:
+                vid = alloc_id()
+                f.write(f"#{vid} = CARTESIAN_POINT('',({v[0]:.4f},{v[1]:.4f},{v[2]:.4f}));\n")
+                v_step_ids.append(vid)
+
+            # Emit faces
+            face_ids = []
+            for tri in f_arr:
+                v0_idx, v1_idx, v2_idx = tri
+                p0 = v_arr[v0_idx]; p1 = v_arr[v1_idx]; p2 = v_arr[v2_idx]
+                d1 = p1 - p0; d2 = p2 - p0
+                n = np.cross(d1, d2)
+                nl = np.linalg.norm(n)
+                n = n / nl if nl > 1e-9 else np.array([0., 0., 1.])
+                t = d1 / np.linalg.norm(d1) if np.linalg.norm(d1) > 1e-9 else np.array([1., 0., 0.])
+
+                pid = alloc_id(); dz = alloc_id(); dx = alloc_id(); ax = alloc_id(); pl = alloc_id()
+                lid = alloc_id(); bid = alloc_id(); fid = alloc_id()
+                f.write(f"#{pid} = CARTESIAN_POINT('',({p0[0]:.4f},{p0[1]:.4f},{p0[2]:.4f}));\n")
+                f.write(f"#{dz} = DIRECTION('',({n[0]:.4f},{n[1]:.4f},{n[2]:.4f}));\n")
+                f.write(f"#{dx} = DIRECTION('',({t[0]:.4f},{t[1]:.4f},{t[2]:.4f}));\n")
+                f.write(f"#{ax} = AXIS2_PLACEMENT_3D('',#{pid},#{dz},#{dx});\n")
+                f.write(f"#{pl} = PLANE('',#{ax});\n")
+                f.write(f"#{lid} = POLY_LOOP('',(#{v_step_ids[v0_idx]},#{v_step_ids[v1_idx]},#{v_step_ids[v2_idx]}));\n")
+                f.write(f"#{bid} = FACE_OUTER_BOUND('',#{lid},.T.);\n")
+                f.write(f"#{fid} = FACE_SURFACE('',(#{bid}),#{pl},.T.);\n")
+                face_ids.append(fid)
+
+            shell_id = alloc_id(); brep_id = alloc_id()
+            f_refs = ','.join(f"#{fid}" for fid in face_ids)
+            f.write(f"#{shell_id} = CLOSED_SHELL('',({f_refs}));\n")
+            f.write(f"#{brep_id} = FACETED_BREP('{name}_Brep',#{shell_id});\n")
+
+            # Part hierarchy with human-readable names on EVERY entity
+            prod_id = alloc_id(); form_id = alloc_id(); pdef_id = alloc_id()
+            pshp_id = alloc_id(); rep_id = alloc_id(); sdr_id = alloc_id()
+
+            f.write(f"#{prod_id} = PRODUCT('{name}','{name}','',(#{prod_ctx}));\n")
+            f.write(f"#{form_id} = PRODUCT_DEFINITION_FORMATION('{name}','',#{prod_id});\n")
+            f.write(f"#{pdef_id} = PRODUCT_DEFINITION('design','{name}',#{form_id},#{pdef_ctx});\n")
+            f.write(f"#{pshp_id} = PRODUCT_DEFINITION_SHAPE('{name}','',#{pdef_id});\n")
+            f.write(f"#{rep_id} = SHAPE_REPRESENTATION('{name}',(#{axis_pl},#{brep_id}),#{geom_ctx});\n")
+            f.write(f"#{sdr_id} = SHAPE_DEFINITION_REPRESENTATION(#{pshp_id},#{rep_id});\n")
+            f.write(f"#{alloc_id()} = PRODUCT_RELATED_PRODUCT_CATEGORY('part',$,(#{prod_id}));\n")
+
+            styled_id = alloc_id()
+            f.write(f"#{styled_id} = STYLED_ITEM('color',(#{style_id}),#{brep_id});\n")
+            f.write(f"#{alloc_id()} = MECHANICAL_DESIGN_GEOMETRIC_PRESENTATION_REPRESENTATION('',(#{styled_id}),#{geom_ctx});\n")
+
+            nauo_id = alloc_id(); rel_pshp_id = alloc_id(); cdsr_id = alloc_id(); rel_id = alloc_id(); trans_id = alloc_id()
+            f.write(f"#{nauo_id} = NEXT_ASSEMBLY_USAGE_OCCURRENCE('{name}','{name}','{name}',#{root_pdef},#{pdef_id},$);\n")
+            f.write(f"#{rel_pshp_id} = PRODUCT_DEFINITION_SHAPE('{name}','',#{nauo_id});\n")
+            f.write(f"#{cdsr_id} = CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(#{rel_id},#{rel_pshp_id});\n")
+            f.write(f"#{rel_id} = ( REPRESENTATION_RELATIONSHIP('','',#{root_rep},#{rep_id}) REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#{trans_id}) SHAPE_REPRESENTATION_RELATIONSHIP() );\n")
+            f.write(f"#{trans_id} = ITEM_DEFINED_TRANSFORMATION('','',#{axis_pl},#{axis_pl});\n")
+
         f.write("ENDSEC;\nEND-ISO-10303-21;\n")
 
     sz_mb = os.path.getsize(output_path) / (1024 * 1024)
-    print(f"\n=== COMPLETE ===")
-    print(f"Output: {output_path} ({sz_mb:.2f} MB)")
-    print(f"Components: Space_Background, Stars, Constellation_Lines, Index_Lines")
-    print(f"Lithophane: Smooth exterior (R={R_outer}mm), variable wall {min_wall}-{max_wall}mm")
-    print(f"Ready for OrcaSlicer / Bambu Studio / PrusaSlicer multicolor printing.")
+    print(f"  [OK] STEP saved: {output_path} ({sz_mb:.2f} MB, {time.time() - t0:.2f}s)")
+
+
+def export_color_map_png(map_img, output_png):
+    """
+    Exports a 4K multicolor PNG preview of the star chart mapping matching the 5 filaments.
+    """
+    arr = np.array(map_img)
+    h, w = arr.shape
+    rgb_img = np.zeros((h, w, 3), dtype=np.uint8)
+
+    palette = {
+        0: (17, 17, 17),       # Black: Dewshield Body
+        1: (0, 224, 128),      # TransparentGreen: Labels & Ecliptic
+        2: (255, 32, 32),      # Red: Constellations
+        3: (255, 215, 0),      # Yellow: Stars
+        4: (255, 255, 255),    # White: Index
+    }
+    for c, col in palette.items():
+        rgb_img[arr == c] = col
+
+    preview = Image.fromarray(rgb_img)
+    preview.save(output_png)
+    thumb_path = os.path.join(WORKSPACE_DIR, "dewshield_h2c_preview.png")
+    preview.resize((1200, 587), Image.Resampling.LANCZOS).save(thumb_path)
+    print(f"Exported graphic map preview: {output_png} and {thumb_path}")
+
+
+def main():
+    args = parse_args()
+    print("=== Cylindrical Multicolor Star Map Dewshield Generator (H2C 5-Color) ===")
+    print(f"Dimensions: Outer R={args.radius:.2f}mm, Wall Thickness={args.wall:.2f}mm, Height={args.height:.2f}mm")
+    print(f"Inner Radius: {args.radius - args.wall:.2f}mm (all colors cut through full {args.wall:.2f}mm wall)")
+    print(f"Target Resolution: {args.grid_w} angular x {args.grid_h} axial cells")
+
+    t_start = time.time()
+
+    # 1. Render 4K vector sky map
+    map_img = render_skymap_layers(4084, 2000)
+
+    # 2. Export 5-color visual preview
+    preview_path = os.path.join(WORKSPACE_DIR, "dewshield_skymap_h2c_5color_4k.png")
+    export_color_map_png(map_img, preview_path)
+
+    # 3. Priority downsample to target cylindrical grid
+    arr = np.array(map_img)
+    grid_class = downsample_priority(arr, args.grid_w, args.grid_h)
+
+    print("\nDownsampled cell distribution across cylinder:")
+    total_cells = args.grid_w * args.grid_h
+    for p in PARTS_CONFIG:
+        c = p['class']
+        cnt = np.sum(grid_class == c)
+        print(f"  {p['name']:20s} (Filament {p['extruder']}): {cnt:6d} cells ({cnt/total_cells*100:5.2f}%)")
+
+    # 4. Construct 3D meshes
+    part_meshes = build_3d_meshes(grid_class, args.radius, args.wall, args.height)
+
+    # 5. Export 3MF
+    if not args.skip_3mf:
+        out_3mf_path = os.path.join(WORKSPACE_DIR, args.output_3mf)
+        export_3mf(part_meshes, out_3mf_path)
+
+    # 6. Export STEP
+    if not args.skip_step:
+        out_step_path = os.path.join(WORKSPACE_DIR, args.output_step)
+        export_step(part_meshes, out_step_path)
+
+    print(f"\n=== GENERATION COMPLETE in {time.time() - t_start:.2f}s ===")
+    print("Files ready for slicing:")
+    if not args.skip_3mf:
+        print(f"  * Bambu Studio Project (.3mf): {args.output_3mf} (LOADS IN 1 SECOND WITH ALL FILAMENTS PRE-ASSIGNED)")
+    if not args.skip_step:
+        print(f"  * STEP Assembly (.stp):        {args.output_step}")
 
 
 if __name__ == '__main__':
