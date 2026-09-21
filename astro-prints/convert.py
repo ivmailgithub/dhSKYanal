@@ -2,19 +2,20 @@
 """
 Cylindrical Multicolor Star Map Dewshield — 3MF & STEP Generator
 ================================================================
-Generates a 3D printable telescope dewshield (130mm outer diameter x 200mm height)
-with astronomical star chart features cutting completely through the full tube wall.
+Generates a 3D printable telescope dewshield (180mm outer diameter x 250mm height)
+calibrated for a 0.4mm nozzle on Bambu Lab H2C (with AMS + HT-AMS).
+All astronomical star chart features cut completely through the full tube wall (2.4mm).
 
-Pre-configured for Bambu Lab H2C with 1 AMS and 1 HT-AMS:
+Pre-configured for Bambu Lab H2C:
   Filament 1: TransparentGreen (#00E080) -> Ecliptic & Constellation Labels
   Filament 2: Red (#FF2020)              -> Constellation Lines
-  Filament 3: Yellow (#FFD700)           -> Stars (Mag 0 to 5)
+  Filament 3: Yellow (#FFD700)           -> Stars (Mag 0 to 5 discs)
   Filament 4: White (#FFFFFF)            -> Index (RA Ruler, Month Calendar, Coordinate Grid)
   Filament 5: Black (#111111)            -> Dewshield Body (Space Background)
 
-All 5 colors extend through the FULL 2.4mm width of the tube (R_inner=62.6mm to R_outer=65.0mm).
+All 5 colors extend through the FULL 2.4mm width of the tube (R_inner=87.6mm to R_outer=90.0mm).
 Both interior and exterior show identical crisp, continuous celestial geometry.
-Zero holes, zero non-manifold edges, zero broken line fragments.
+Zero holes, zero non-manifold edges, zero solid square lettering artifacts.
 """
 
 import os
@@ -72,32 +73,98 @@ PARTS_CONFIG = [
     },
 ]
 
+CONSTELLATION_NAMES = {
+    'And': 'ANDROMEDA', 'Ant': 'ANTLIA', 'Aps': 'APUS', 'Aqr': 'AQUARIUS',
+    'Aql': 'AQUILA', 'Ara': 'ARA', 'Ari': 'ARIES', 'Aur': 'AURIGA',
+    'Boo': 'BOOTES', 'Cae': 'CAELUM', 'Cam': 'CAMELOPARDALIS', 'Cnc': 'CANCER',
+    'CVn': 'CANES VENATICI', 'CMa': 'CANIS MAJOR', 'CMi': 'CANIS MINOR',
+    'Cap': 'CAPRICORNUS', 'Car': 'CARINA', 'Cas': 'CASSIOPEIA', 'Cen': 'CENTAURUS',
+    'Cep': 'CEPHEUS', 'Cet': 'CETUS', 'Cha': 'CHAMAELEON', 'Cir': 'CIRCINUS',
+    'Col': 'COLUMBA', 'Com': 'COMA BERENICES', 'CrA': 'CORONA AUSTRINA',
+    'CrB': 'CORONA BOREALIS', 'Crv': 'CORVUS', 'Crt': 'CRATER', 'Cru': 'CRUX',
+    'Cyg': 'CYGNUS', 'Del': 'DELPHINUS', 'Dor': 'DORADO', 'Dra': 'DRACO',
+    'Equ': 'EQUULEUS', 'Eri': 'ERIDANUS', 'For': 'FORNAX', 'Gem': 'GEMINI',
+    'Gru': 'GRUS', 'Her': 'HERCULES', 'Hor': 'HOROLOGIUM', 'Hya': 'HYDRA',
+    'Hyi': 'HYDRUS', 'Ind': 'INDUS', 'Lac': 'LACERTA', 'Leo': 'LEO',
+    'LMi': 'LEO MINOR', 'Lep': 'LEPUS', 'Lib': 'LIBRA', 'Lup': 'LUPUS',
+    'Lyn': 'LYNX', 'Lyr': 'LYRA', 'Men': 'MENSA', 'Mic': 'MICROSCOPIUM',
+    'Mon': 'MONOCEROS', 'Mus': 'MUSCA', 'Nor': 'NORMA', 'Oct': 'OCTANS',
+    'Oph': 'OPHIUCHUS', 'Ori': 'ORION', 'Pav': 'PAVO', 'Peg': 'PEGASUS',
+    'Per': 'PERSEUS', 'Phe': 'PHOENIX', 'Pic': 'PICTOR', 'Psc': 'PISCES',
+    'PsA': 'PISCIS AUSTRINUS', 'Pup': 'PUPPIS', 'Pyx': 'PYXIS', 'Ret': 'RETICULUM',
+    'Sge': 'SAGITTA', 'Sgr': 'SAGITTARIUS', 'Sco': 'SCORPIUS', 'Scl': 'SCULPTOR',
+    'Sct': 'SCUTUM', 'Ser': 'SERPENS', 'Sex': 'SEXTANS', 'Tau': 'TAURUS',
+    'Tel': 'TELESCOPIUM', 'Tri': 'TRIANGULUM', 'TrA': 'TRIANGULUM AUSTRALE',
+    'Tuc': 'TUCANA', 'UMa': 'URSA MAJOR', 'UMi': 'URSA MINOR', 'Vel': 'VELA',
+    'Vir': 'VIRGO', 'Vol': 'VOLANS', 'Vul': 'VULPECULA'
+}
+
+PROMINENT = {
+    'Ori', 'UMa', 'Cas', 'Leo', 'Cyg', 'Lyr', 'Aql', 'Tau',
+    'Gem', 'CMa', 'Peg', 'Sco', 'Sgr', 'Boo', 'Her', 'Vir',
+    'And', 'Per', 'Aur', 'Cep', 'Cru', 'Cen', 'Car', 'Hya',
+    'Oph', 'Cet', 'Cap', 'Aqr', 'Psc', 'Ari', 'Dra'
+}
+
+EXCLUDE = {"Mic", "Tel", "Cae", "Ant", "Sex", "Vul", "Equ", "Men", "Cha", "Vol", "Mus"}
+
+# Manual offsets (dx, dy in pixels) for crowded star chart regions
+CUSTOM_OFFSETS = {
+    'CrB': (0, 75),       # Corona Borealis centered in crown arc
+    'Del': (-80, -40),    # Delphinus clear of Aquila
+    'Lep': (0, 75),       # Lepus south of Canis Major
+    'CrA': (0, 60),       # Corona Austrina clear of Scorpius
+    'Lup': (80, 50),      # Lupus clear of Scorpius
+    'Ser': (40, -35),     # Serpens Caput clear of Ophiuchus
+}
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Convert Astronomical Star Chart into a 5-Color Full-Width Dewshield (3MF & STEP)."
     )
-    parser.add_argument('--radius', '-r', type=float, default=65.0, help="Outer cylinder radius in mm (default: 65.0)")
+    parser.add_argument('--radius', '-r', type=float, default=90.0, help="Outer cylinder radius in mm (default: 90.0 for 180mm diameter)")
     parser.add_argument('--wall', '--wall-thickness', '-w', dest='wall', type=float, default=2.4, help="Total tube wall thickness in mm (default: 2.4)")
-    parser.add_argument('--height', '-H', type=float, default=200.0, help="Cylinder height in mm (default: 200.0)")
-    parser.add_argument('--angle', '--grid-w', dest='grid_w', type=int, default=360, help="Circumferential grid resolution (default: 360)")
-    parser.add_argument('--vert', '--grid-h', dest='grid_h', type=int, default=180, help="Axial grid resolution (default: 180)")
-    parser.add_argument('--rotate', type=int, default=0, choices=[0, 90, 180, 270], help="Image rotation in degrees (default: 0)")
+    parser.add_argument('--height', '-H', type=float, default=250.0, help="Cylinder height in mm (default: 250.0)")
+    parser.add_argument('--angle', '--grid-w', dest='grid_w', type=int, default=1440, help="Circumferential grid resolution (default: 1440 for 0.4mm nozzle)")
+    parser.add_argument('--vert', '--grid-h', dest='grid_h', type=int, default=625, help="Axial grid resolution (default: 625 for 0.4mm nozzle)")
+    parser.add_argument('--rotate', type=int, default=0, choices=[0, 90, 180, 270], help="Image rotation in degrees (default: 0 for standard cylinder projection)")
     parser.add_argument('--output-3mf', '-m', type=str, default='dewshield_h2c_5color.3mf', help="Output 3MF path (default: dewshield_h2c_5color.3mf)")
     parser.add_argument('--output-step', '-s', type=str, default='dewshield_clean.stp', help="Output STEP path (default: dewshield_clean.stp)")
     parser.add_argument('--skip-step', action='store_true', help="Skip generating STEP file (only output 3MF)")
     parser.add_argument('--skip-3mf', action='store_true', help="Skip generating 3MF file (only output STEP)")
+    parser.add_argument('--step-grid-w', type=int, default=480, help="Circumferential grid resolution for STEP export (default: 480 for fast CAD import)")
+    parser.add_argument('--step-grid-h', type=int, default=208, help="Axial grid resolution for STEP export (default: 208 for fast CAD import)")
+    parser.add_argument('--full-step', action='store_true', help="Force STEP export at full 3MF resolution (warning: large file size)")
     return parser.parse_args()
 
 
-def render_skymap_layers(w=4084, h=2000):
+def draw_tracked_text(draw, pos, text, font, fill, tracking=13):
+    x, y = pos
+    for ch in text:
+        draw.text((x, y), ch, fill=fill, font=font)
+        bb = draw.textbbox((0, 0), ch, font=font)
+        x += (bb[2] - bb[0]) + tracking
+
+
+def get_tracked_bbox(draw, text, font, tracking=13):
+    total_w = 0
+    max_h = 0
+    for ch in text:
+        bb = draw.textbbox((0, 0), ch, font=font)
+        total_w += (bb[2] - bb[0]) + tracking
+        max_h = max(max_h, bb[3] - bb[1])
+    return total_w - tracking, max_h
+
+
+def render_skymap_layers(w=5655, h=2500):
     """
-    Renders the astronomical dataset onto a 4084x2000 pixel discrete map:
-      0 = Background
-      1 = Labels & Ecliptic (TransparentGreen)
-      2 = Constellations (Red)
-      3 = Stars (Yellow)
-      4 = Index (White)
+    Renders the astronomical dataset onto a 5655x2500 discrete map (10 px/mm scale):
+      0 = Background Body (Black, #111111)
+      1 = Labels & Ecliptic (TransparentGreen, #00E080)
+      2 = Constellations (Red, #FF2020)
+      3 = Stars (Yellow, #FFD700)
+      4 = Index (White, #FFFFFF)
     """
     stars_file = os.path.join(WORKSPACE_DIR, 'stars.6.json')
     lines_file = os.path.join(WORKSPACE_DIR, 'constellations.lines.json')
@@ -110,11 +177,11 @@ def render_skymap_layers(w=4084, h=2000):
     with open(names_file, encoding='utf-8') as f:
         names_data = json.load(f)
 
-    y_top = int(h * 0.075)  # 150 px for month calendar strip
-    y_bot = int(h * 0.925)  # 1850 px for RA hour ruler
+    y_top = int(h * 0.072)   # 180 px for top calendar month strip
+    y_bot = int(h * 0.928)   # 2320 px for bottom RA hour ruler & legend
     h_sky = y_bot - y_top
-    dec_min = -75.0
-    dec_max = 75.0
+    dec_min = -70.0
+    dec_max = 70.0
 
     def ra_dec_to_xy(ra_deg, dec_deg):
         x = (1.0 - ((ra_deg % 360.0) / 360.0)) * w
@@ -127,36 +194,36 @@ def render_skymap_layers(w=4084, h=2000):
     # Fonts
     font_path = r"C:\Windows\Fonts\arialbd.ttf"
     try:
-        font_large = ImageFont.truetype(font_path, 36)
-        font_mid   = ImageFont.truetype(font_path, 24)
-        font_ruler = ImageFont.truetype(font_path, 32)
-        font_dec   = ImageFont.truetype(font_path, 22)
-        font_sub   = ImageFont.truetype(font_path, 18)
+        font_prom  = ImageFont.truetype(font_path, 65)  # 6.5 mm cap height
+        font_sec   = ImageFont.truetype(font_path, 48)  # 4.8 mm cap height
+        font_ruler = ImageFont.truetype(font_path, 38)  # 3.8 mm cap height
+        font_dec   = ImageFont.truetype(font_path, 28)  # 2.8 mm cap height
+        font_sub   = ImageFont.truetype(font_path, 22)  # 2.2 mm cap height
     except Exception:
-        font_large = ImageFont.load_default()
-        font_mid = font_large; font_ruler = font_large; font_dec = font_large; font_sub = font_large
+        font_prom = ImageFont.load_default()
+        font_sec = font_prom; font_ruler = font_prom; font_dec = font_prom; font_sub = font_prom
 
-    print("Drawing Layer 4: Coordinate Grid...")
+    print("  Drawing Layer 4: Coordinate Grid...")
     # RA lines every 15 deg (1 hour)
     for hr in range(24):
         ra = hr * 15.0
         x, _ = ra_dec_to_xy(ra, 0)
-        draw.line([(x, y_top), (x, y_bot)], fill=4, width=3)
+        draw.line([(x, y_top), (x, y_bot)], fill=4, width=4)
 
-    # Dec lines every 10 deg (Equator is width 7)
-    for dec in range(-70, 80, 10):
+    # Dec lines every 10 deg (Equator is width 8)
+    for dec in range(-60, 70, 10):
         _, y = ra_dec_to_xy(0, dec)
-        lw = 7 if dec == 0 else 3
+        lw = 8 if dec == 0 else 4
         draw.line([(0, y), (w, y)], fill=4, width=lw)
 
     # Dec Labels
     for dec in range(-60, 70, 20):
         dstr = "EQUATOR 0°" if dec == 0 else (f"+{dec}°" if dec > 0 else f"{dec}°")
         _, y = ra_dec_to_xy(0, dec)
-        draw.text((25, y - 12), dstr, fill=4, font=font_dec)
-        draw.text((w - 170, y - 12), dstr, fill=4, font=font_dec)
+        draw.text((35, y - 16), dstr, fill=4, font=font_dec)
+        draw.text((w - 240, y - 16), dstr, fill=4, font=font_dec)
 
-    print("Drawing Layer 2: Constellation Lines (Red)...")
+    print("  Drawing Layer 2: Constellation Lines (Red, 0.6mm)...")
     for feat in lines_data['features']:
         coords = feat['geometry']['coordinates']
         for seg in coords:
@@ -170,22 +237,22 @@ def render_skymap_layers(w=4084, h=2000):
                 if max(y1, y2) < y_top or min(y1, y2) > y_bot:
                     continue
                 if abs(x1 - x2) < w / 2:
-                    draw.line([(x1, y1), (x2, y2)], fill=2, width=10)
+                    draw.line([(x1, y1), (x2, y2)], fill=2, width=6)
                 else:
                     if x1 > x2:
                         dx = (w - x1) + x2
                         frac = (w - x1) / dx
                         y_mid = y1 + (y2 - y1) * frac
-                        draw.line([(x1, y1), (w, y_mid)], fill=2, width=10)
-                        draw.line([(0, y_mid), (x2, y2)], fill=2, width=10)
+                        draw.line([(x1, y1), (w, y_mid)], fill=2, width=6)
+                        draw.line([(0, y_mid), (x2, y2)], fill=2, width=6)
                     else:
                         dx = x1 + (w - x2)
                         frac = x1 / dx
                         y_mid = y1 + (y2 - y1) * frac
-                        draw.line([(x1, y1), (0, y_mid)], fill=2, width=10)
-                        draw.line([(w, y_mid), (x2, y2)], fill=2, width=10)
+                        draw.line([(x1, y1), (0, y_mid)], fill=2, width=6)
+                        draw.line([(w, y_mid), (x2, y2)], fill=2, width=6)
 
-    print("Drawing Layer 1: Labels & Ecliptic (TransparentGreen)...")
+    print("  Drawing Layer 1: Ecliptic & Constellation Labels (TransparentGreen)...")
     # Ecliptic curve
     ecliptic_pts = []
     for deg in range(0, 361, 1):
@@ -200,42 +267,42 @@ def render_skymap_layers(w=4084, h=2000):
     ecliptic_pts.sort(key=lambda p: p[0])
     for i in range(len(ecliptic_pts) - 1):
         p1 = ecliptic_pts[i]; p2 = ecliptic_pts[i+1]
-        if abs(p1[0] - p2[0]) < 80:
+        if abs(p1[0] - p2[0]) < 100:
             if (i // 6) % 2 == 0:
-                draw.line([p1, p2], fill=1, width=7)
+                draw.line([p1, p2], fill=1, width=6)
 
-    PROMINENT = {
-        "Ori": "ORION", "UMa": "URSA MAJOR", "Cas": "CASSIOPEIA", "Leo": "LEO",
-        "Cyg": "CYGNUS", "Lyr": "LYRA", "Aql": "AQUILA", "Tau": "TAURUS",
-        "Gem": "GEMINI", "CMa": "CANIS MAJOR", "Peg": "PEGASUS", "Sco": "SCORPIUS",
-        "Sgr": "SAGITTARIUS", "Boo": "BOOTES", "Her": "HERCULES", "Vir": "VIRGO",
-        "And": "ANDROMEDA", "Per": "PERSEUS", "Aur": "AURIGA", "Cep": "CEPHEUS",
-        "Cru": "CRUX", "Cen": "CENTAURUS", "Car": "CARINA", "Hya": "HYDRA",
-        "Oph": "OPHIUCHUS", "Cet": "CETUS", "Cap": "CAPRICORNUS", "Aqr": "AQUARIUS",
-        "Psc": "PISCES", "Ari": "ARIES", "Dra": "DRACO"
-    }
-    EXCLUDE = {"Mic", "Tel", "Cae", "Ant", "Sex", "Vul", "Equ", "Men", "Cha", "Vol", "Mus"}
-
+    # Constellation Labels with Letter Tracking and Collision-Free Placement
+    seen_ser = False
     for feat in names_data['features']:
         cid = feat['id']
         if cid in EXCLUDE:
             continue
+        if cid == 'Ser':
+            if seen_ser: continue
+            seen_ser = True
+
         lon, lat = feat['geometry']['coordinates']
         ra = (lon + 360.0) % 360.0
         dec = lat
         x, y = ra_dec_to_xy(ra, dec)
+        dx, dy = CUSTOM_OFFSETS.get(cid, (0, 0))
+        x += dx; y += dy
 
-        if y_top + 50 <= y <= y_bot - 50:
+        if y_top + 55 <= y <= y_bot - 55:
             is_prom = cid in PROMINENT
-            name = PROMINENT[cid] if is_prom else feat['properties'].get('name', cid).upper()
-            fnt = font_large if is_prom else font_mid
-            bbox = draw.textbbox((0, 0), name, font=fnt)
-            tw = bbox[2] - bbox[0]; th = bbox[3] - bbox[1]
-            tx = x - tw / 2; ty = y - th / 2
-            draw.rectangle([(tx - 6, ty - 4), (tx + tw + 6, ty + th + 4)], fill=0)
-            draw.text((tx, ty), name, fill=1, font=fnt)
+            name = CONSTELLATION_NAMES.get(cid, cid)
+            fnt = font_prom if is_prom else font_sec
+            trk = 13 if is_prom else 10
 
-    print("Drawing Layer 3: Stars (Yellow)...")
+            tw, th = get_tracked_bbox(draw, name, fnt, trk)
+            tx = x - tw / 2
+            ty = y - th / 2
+
+            # Background plate clearing box
+            draw.rectangle([(tx - 8, ty - 6), (tx + tw + 8, ty + th + 6)], fill=0)
+            draw_tracked_text(draw, (tx, ty), name, fnt, fill=1, tracking=trk)
+
+    print("  Drawing Layer 3: Stars (Yellow, Mag 0 to 5 discs)...")
     star_list = []
     for feat in stars_data['features']:
         lon, lat = feat['geometry']['coordinates']
@@ -245,75 +312,86 @@ def render_skymap_layers(w=4084, h=2000):
         if dec_min - 4 <= dec <= dec_max + 4:
             star_list.append((ra, dec, mag))
 
-    star_list.sort(key=lambda s: -s[2])
+    star_list.sort(key=lambda s: -s[2])  # faintest first
 
     for ra, dec, mag in star_list:
         x, y = ra_dec_to_xy(ra, dec)
         if not (y_top + 5 <= y <= y_bot - 5):
             continue
-        if mag <= 0.0:    r_s = 20
-        elif mag <= 1.5:  r_s = 16
-        elif mag <= 2.5:  r_s = 12
-        elif mag <= 3.5:  r_s = 9
-        elif mag <= 4.5:  r_s = 7
-        elif mag <= 5.0:  r_s = 5
+
+        # Calibrated for 0.4mm nozzle:
+        if mag <= 0.0:   r_s = 18
+        elif mag <= 1.5: r_s = 14
+        elif mag <= 2.5: r_s = 11
+        elif mag <= 3.5: r_s = 8
+        elif mag <= 4.5: r_s = 6
+        elif mag <= 5.0: r_s = 4
         else: continue
+
         draw.ellipse([(x - r_s, y - r_s), (x + r_s, y + r_s)], fill=3)
         if mag <= 1.0:
-            draw.ellipse([(x - r_s - 3, y - r_s - 3), (x + r_s + 3, y + r_s + 3)], outline=3, width=3)
+            draw.ellipse([(x - r_s - 4, y - r_s - 4), (x + r_s + 4, y + r_s + 4)], outline=3, width=3)
 
-    print("Drawing Top Month Header & Bottom RA Ruler...")
-    # Top Header: Month Calendar Ruler
+    print("  Drawing Top Rim Month Calendar Strip...")
     draw.rectangle([(0, 0), (w, y_top)], fill=0)
     draw.line([(0, y_top), (w, y_top)], fill=4, width=6)
+
     months = [
-        ("DECEMBER", 0), ("NOVEMBER", 1), ("OCTOBER", 2), ("SEPTEMBER", 3),
-        ("AUGUST", 4), ("JULY", 5), ("JUNE", 6), ("MAY", 7),
-        ("APRIL", 8), ("MARCH", 9), ("FEBRUARY", 10), ("JANUARY", 11)
+        "DECEMBER", "NOVEMBER", "OCTOBER", "SEPTEMBER", "AUGUST", "JULY",
+        "JUNE", "MAY", "APRIL", "MARCH", "FEBRUARY", "JANUARY"
     ]
     month_w = w / 12.0
-    for i, (mname, _) in enumerate(months):
+    for i, mname in enumerate(months):
         mx = i * month_w
         draw.line([(mx, 0), (mx, y_top)], fill=4, width=4)
-        draw.line([(mx + month_w / 3.0, y_top - 30), (mx + month_w / 3.0, y_top)], fill=4, width=3)
-        draw.line([(mx + 2 * month_w / 3.0, y_top - 30), (mx + 2 * month_w / 3.0, y_top)], fill=4, width=3)
-        bbox = draw.textbbox((0, 0), mname, font=font_ruler)
-        mw = bbox[2] - bbox[0]
-        draw.text((mx + (month_w - mw) / 2.0, (y_top - 30) / 2.0 - 5), mname, fill=4, font=font_ruler)
+        draw.line([(mx + month_w / 3.0, y_top - 35), (mx + month_w / 3.0, y_top)], fill=4, width=3)
+        draw.line([(mx + 2 * month_w / 3.0, y_top - 35), (mx + 2 * month_w / 3.0, y_top)], fill=4, width=3)
 
-    # Bottom Footer: RA Ruler
+        tw, th = get_tracked_bbox(draw, mname, font_ruler, 6)
+        tx = mx + (month_w - tw) / 2.0
+        ty = (y_top - 35 - th) / 2.0
+        draw_tracked_text(draw, (tx, ty), mname, font_ruler, fill=4, tracking=6)
+
+    print("  Drawing Bottom Rim RA Hour Scale & Legend...")
     draw.rectangle([(0, y_bot), (w, h)], fill=0)
     draw.line([(0, y_bot), (w, y_bot)], fill=4, width=6)
+
     for hr in range(24):
         x, _ = ra_dec_to_xy(hr * 15.0, 0)
-        draw.line([(x, y_bot), (x, y_bot + 40)], fill=4, width=4)
+        draw.line([(x, y_bot), (x, y_bot + 45)], fill=4, width=4)
         x_half, _ = ra_dec_to_xy((hr + 0.5) * 15.0, 0)
-        draw.line([(x_half, y_bot), (x_half, y_bot + 26)], fill=4, width=3)
+        draw.line([(x_half, y_bot), (x_half, y_bot + 30)], fill=4, width=3)
         for frac in [1/6, 2/6, 4/6, 5/6]:
             xf, _ = ra_dec_to_xy((hr + frac) * 15.0, 0)
-            draw.line([(xf, y_bot), (xf, y_bot + 15)], fill=4, width=2)
-        txt = f"{hr}h"
-        bbox = draw.textbbox((0, 0), txt, font=font_ruler)
-        tw = bbox[2] - bbox[0]
-        draw.text((x - tw / 2.0, y_bot + 45), txt, fill=4, font=font_ruler)
+            draw.line([(xf, y_bot), (xf, y_bot + 18)], fill=4, width=2)
 
-    draw.text((60, y_bot + 90), "STAR MAGNITUDE SCALE:", fill=4, font=font_sub)
-    leg_x = 310
+        txt = f"{hr}h"
+        tw, th = get_tracked_bbox(draw, txt, font_ruler, 4)
+        draw_tracked_text(draw, (x - tw / 2.0, y_bot + 52), txt, font_ruler, fill=4, tracking=4)
+
+    draw.text((70, y_bot + 105), "STAR MAGNITUDE SCALE:", fill=4, font=font_sub)
+    leg_x = 380
     mags_legend = [("0", 18), ("1st", 14), ("2nd", 11), ("3rd", 8), ("4th", 6)]
     for label, r_circ in mags_legend:
-        draw.ellipse([(leg_x, y_bot + 100 - r_circ), (leg_x + 2*r_circ, y_bot + 100 + r_circ)], fill=3)
-        draw.text((leg_x + 2*r_circ + 10, y_bot + 90), label, fill=4, font=font_sub)
-        leg_x += 2*r_circ + 75
+        draw.ellipse([(leg_x, y_bot + 115 - r_circ), (leg_x + 2*r_circ, y_bot + 115 + r_circ)], fill=3)
+        draw.text((leg_x + 2*r_circ + 10, y_bot + 105), label, fill=4, font=font_sub)
+        leg_x += 2*r_circ + 90
 
     return map_img
 
 
-def downsample_priority(arr, nw, nh):
+def downsample_priority(arr, nw, nh, rotate_deg=0):
     """
-    Priority downsampler:
-      Preserves all lines and stars without smearing or breaking!
-      Priority order: Stars (3) > Constellations (2) > Labels/Ecliptic (1) > Index (4) > Background (0)
+    Calibrated priority downsampler for 0.4mm nozzle:
+      - Preserves lines (class 2) and stars (class 3) without dropouts.
+      - Requires >= 25% pixel coverage for labels (class 1), preventing dilation into solid squares!
+      - Connects diagonal strokes cleanly without dilating letters into blobs.
     """
+    if rotate_deg != 0:
+        rot_k = (rotate_deg // 90) % 4
+        # np.rot90 rotates CCW: rot_k=1 is 90 CCW, so 90 CW is rot_k=3
+        arr = np.rot90(arr, -rot_k)
+
     h_orig, w_orig = arr.shape
     grid_class = np.zeros((nh, nw), dtype=np.uint8)
     x_bins = np.linspace(0, w_orig, nw + 1).astype(int)
@@ -325,24 +403,33 @@ def downsample_priority(arr, nw, nh):
         for i in range(nw):
             x0, x1 = x_bins[i], x_bins[i + 1]
             block = arr[y0:y1, x0:x1]
-            if 3 in block:   grid_class[j, i] = 3
-            elif 2 in block: grid_class[j, i] = 2
-            elif 1 in block: grid_class[j, i] = 1
-            elif 4 in block: grid_class[j, i] = 4
-            else:            grid_class[j, i] = 0
+            cnt3 = np.count_nonzero(block == 3)
+            cnt2 = np.count_nonzero(block == 2)
+            cnt1 = np.count_nonzero(block == 1)
+            cnt4 = np.count_nonzero(block == 4)
 
-    # Resolve all diagonal contacts to ensure 100% 2-manifold closed meshes
-    for _ in range(5):
-        for c in range(5):
-            for j in range(nh - 1):
-                for i in range(nw):
-                    i_next = (i + 1) % nw
-                    if grid_class[j, i] == c and grid_class[j+1, i_next] == c:
-                        if grid_class[j+1, i] != c and grid_class[j, i_next] != c:
-                            grid_class[j+1, i] = c
-                    if grid_class[j, i_next] == c and grid_class[j+1, i] == c:
-                        if grid_class[j, i] != c and grid_class[j+1, i_next] != c:
-                            grid_class[j, i] = c
+            if cnt3 >= 3:
+                grid_class[j, i] = 3
+            elif cnt2 >= 3:
+                grid_class[j, i] = 2
+            elif cnt1 >= 4:  # At least 25% text coverage required (prevents solid square blobs!)
+                grid_class[j, i] = 1
+            elif cnt4 >= 3:
+                grid_class[j, i] = 4
+            else:
+                grid_class[j, i] = 0
+
+    # 1-pass checkerboard stroke connection for lines (class 2) to ensure 100% 2-manifold closed meshes
+    for c in [2]:
+        for j in range(nh - 1):
+            for i in range(nw):
+                i_next = (i + 1) % nw
+                if grid_class[j, i] == c and grid_class[j+1, i_next] == c:
+                    if grid_class[j+1, i] != c and grid_class[j, i_next] != c:
+                        grid_class[j+1, i] = c
+                if grid_class[j, i_next] == c and grid_class[j+1, i] == c:
+                    if grid_class[j, i] != c and grid_class[j+1, i_next] != c:
+                        grid_class[j, i] = c
 
     return grid_class
 
@@ -446,7 +533,7 @@ def build_3d_meshes(grid_class, r_outer, wall_thickness, h_cyl):
     return part_meshes
 
 
-def export_3mf(part_meshes, output_path):
+def export_3mf(part_meshes, output_path, diam_mm=180.0, height_mm=250.0):
     """
     Exports a native Bambu Studio / OrcaSlicer 3MF project with pre-configured filaments
     for the Bambu Lab H2C + AMS + HT-AMS setup.
@@ -493,7 +580,8 @@ def export_3mf(part_meshes, output_path):
         current_obj_id += 1
 
     root_obj_id = current_obj_id
-    model_xml.append(f'    <object id="{root_obj_id}" type="model" name="Astro_Dewshield_130x200">\n')
+    assembly_name = f"Astro_Dewshield_{int(diam_mm)}x{int(height_mm)}"
+    model_xml.append(f'    <object id="{root_obj_id}" type="model" name="{assembly_name}">\n')
     model_xml.append('      <components>\n')
     for oid, _, _ in obj_ids:
         model_xml.append(f'        <component objectid="{oid}"/>\n')
@@ -527,7 +615,7 @@ def export_3mf(part_meshes, output_path):
     model_settings = [
         '; model_settings.config\n',
         '[object_1]\n',
-        'name = Astro_Dewshield_130x200\n\n'
+        f'name = {assembly_name}\n\n'
     ]
     for idx, (_, name, ext_id) in enumerate(obj_ids):
         model_settings.append(f'[part_{idx + 1}]\n')
@@ -572,7 +660,7 @@ def export_3mf(part_meshes, output_path):
     print(f"  [OK] 3MF saved: {output_path} ({sz_mb:.2f} MB, {time.time() - t0:.2f}s)")
 
 
-def export_step(part_meshes, output_path):
+def export_step(part_meshes, output_path, diam_mm=180.0, height_mm=250.0):
     """
     Exports a clean STEP AP214 assembly with human-readable entity names and embedded colors.
     """
@@ -586,9 +674,11 @@ def export_step(part_meshes, output_path):
         entity_id += 1
         return res
 
+    assembly_name = f"Astro_Dewshield_{int(diam_mm)}x{int(height_mm)}"
+
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write("ISO-10303-21;\nHEADER;\n")
-        f.write("FILE_DESCRIPTION(('Cylindrical Multicolor Star Map Dewshield Assembly'),'2;1');\n")
+        f.write(f"FILE_DESCRIPTION(('Cylindrical Multicolor Star Map Dewshield Assembly {int(diam_mm)}x{int(height_mm)}'),'2;1');\n")
         f.write(f"FILE_NAME('{os.path.basename(output_path)}','{time.strftime('%Y-%m-%dT%H:%M:%S')}',('User'),('User'),'Processor','System','');\n")
         f.write("FILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\n")
         f.write("ENDSEC;\nDATA;\n")
@@ -615,11 +705,11 @@ def export_step(part_meshes, output_path):
         root_prod = alloc_id(); root_form = alloc_id(); root_pdef = alloc_id()
         root_pshp = alloc_id(); root_rep = alloc_id(); root_sdr = alloc_id()
 
-        f.write(f"#{root_prod} = PRODUCT('Astro_Dewshield_130x200','Astro_Dewshield_130x200','',(#{prod_ctx}));\n")
-        f.write(f"#{root_form} = PRODUCT_DEFINITION_FORMATION('Astro_Dewshield_130x200','',#{root_prod});\n")
-        f.write(f"#{root_pdef} = PRODUCT_DEFINITION('design','Astro_Dewshield_130x200',#{root_form},#{pdef_ctx});\n")
-        f.write(f"#{root_pshp} = PRODUCT_DEFINITION_SHAPE('Astro_Dewshield_130x200','',#{root_pdef});\n")
-        f.write(f"#{root_rep} = SHAPE_REPRESENTATION('Astro_Dewshield_130x200',(#{axis_pl}),#{geom_ctx});\n")
+        f.write(f"#{root_prod} = PRODUCT('{assembly_name}','{assembly_name}','',(#{prod_ctx}));\n")
+        f.write(f"#{root_form} = PRODUCT_DEFINITION_FORMATION('{assembly_name}','',#{root_prod});\n")
+        f.write(f"#{root_pdef} = PRODUCT_DEFINITION('design','{assembly_name}',#{root_form},#{pdef_ctx});\n")
+        f.write(f"#{root_pshp} = PRODUCT_DEFINITION_SHAPE('{assembly_name}','',#{root_pdef});\n")
+        f.write(f"#{root_rep} = SHAPE_REPRESENTATION('{assembly_name}',(#{axis_pl}),#{geom_ctx});\n")
         f.write(f"#{root_sdr} = SHAPE_DEFINITION_REPRESENTATION(#{root_pshp},#{root_rep});\n")
         f.write(f"#{alloc_id()} = PRODUCT_RELATED_PRODUCT_CATEGORY('assembly',$,(#{root_prod}));\n")
 
@@ -706,7 +796,7 @@ def export_step(part_meshes, output_path):
 
 def export_color_map_png(map_img, output_png):
     """
-    Exports a 4K multicolor PNG preview of the star chart mapping matching the 5 filaments.
+    Exports a 5K multicolor PNG preview of the star chart mapping matching the 5 filaments.
     """
     arr = np.array(map_img)
     h, w = arr.shape
@@ -725,54 +815,71 @@ def export_color_map_png(map_img, output_png):
     preview = Image.fromarray(rgb_img)
     preview.save(output_png)
     thumb_path = os.path.join(WORKSPACE_DIR, "dewshield_h2c_preview.png")
-    preview.resize((1200, 587), Image.Resampling.LANCZOS).save(thumb_path)
-    print(f"Exported graphic map preview: {output_png} and {thumb_path}")
+    preview.resize((1200, int(1200 * h / w)), Image.Resampling.LANCZOS).save(thumb_path)
+    print(f"  [OK] Graphic previews saved: {output_png} and {thumb_path}")
 
 
 def main():
     args = parse_args()
+    diam_mm = args.radius * 2.0
+    circumference = math.pi * diam_mm
+
     print("=== Cylindrical Multicolor Star Map Dewshield Generator (H2C 5-Color) ===")
-    print(f"Dimensions: Outer R={args.radius:.2f}mm, Wall Thickness={args.wall:.2f}mm, Height={args.height:.2f}mm")
-    print(f"Inner Radius: {args.radius - args.wall:.2f}mm (all colors cut through full {args.wall:.2f}mm wall)")
-    print(f"Target Resolution: {args.grid_w} angular x {args.grid_h} axial cells")
+    print(f"Dimensions: Outer Diameter={diam_mm:.1f}mm (Radius={args.radius:.2f}mm), Height={args.height:.1f}mm, Wall={args.wall:.2f}mm")
+    print(f"Circumference: {circumference:.2f}mm | Inner Radius: {args.radius - args.wall:.2f}mm (all colors cut through full wall)")
+    print(f"Target 3MF Resolution: {args.grid_w} angular x {args.grid_h} axial cells (~{circumference/args.grid_w:.3f}mm x {args.height/args.grid_h:.3f}mm per cell)")
+    if args.rotate != 0:
+        print(f"Projection Rotation: {args.rotate}°")
 
     t_start = time.time()
 
-    # 1. Render 4K vector sky map
-    map_img = render_skymap_layers(4084, 2000)
+    # 1. Calculate map dimensions at 10 pixels/mm
+    map_w = int(round(circumference * 10.0))
+    map_h = int(round(args.height * 10.0))
+    print(f"\n1. Rendering 10 px/mm Vector Sky Map ({map_w} x {map_h} px)...")
+    map_img = render_skymap_layers(map_w, map_h)
 
     # 2. Export 5-color visual preview
+    print("\n2. Exporting 5-Color Graphic Preview...")
     preview_path = os.path.join(WORKSPACE_DIR, "dewshield_skymap_h2c_5color_4k.png")
     export_color_map_png(map_img, preview_path)
 
     # 3. Priority downsample to target cylindrical grid
+    print(f"\n3. Priority Downsampling to {args.grid_w}x{args.grid_h} Grid (0.4mm Nozzle Calibrated)...")
     arr = np.array(map_img)
-    grid_class = downsample_priority(arr, args.grid_w, args.grid_h)
+    grid_class = downsample_priority(arr, args.grid_w, args.grid_h, rotate_deg=args.rotate)
 
-    print("\nDownsampled cell distribution across cylinder:")
     total_cells = args.grid_w * args.grid_h
     for p in PARTS_CONFIG:
         c = p['class']
         cnt = np.sum(grid_class == c)
-        print(f"  {p['name']:20s} (Filament {p['extruder']}): {cnt:6d} cells ({cnt/total_cells*100:5.2f}%)")
+        print(f"  {p['name']:20s} (Filament {p['extruder']}): {cnt:7d} cells ({cnt/total_cells*100:5.2f}%)")
 
-    # 4. Construct 3D meshes
-    part_meshes = build_3d_meshes(grid_class, args.radius, args.wall, args.height)
-
-    # 5. Export 3MF
+    # 4. Construct 3D meshes for 3MF
     if not args.skip_3mf:
+        print(f"\n4. Constructing 3D Meshes for 3MF ({args.grid_w}x{args.grid_h})...")
+        part_meshes_3mf = build_3d_meshes(grid_class, args.radius, args.wall, args.height)
         out_3mf_path = os.path.join(WORKSPACE_DIR, args.output_3mf)
-        export_3mf(part_meshes, out_3mf_path)
+        export_3mf(part_meshes_3mf, out_3mf_path, diam_mm=diam_mm, height_mm=args.height)
 
-    # 6. Export STEP
+    # 5. Construct 3D meshes for STEP
     if not args.skip_step:
+        step_w = args.grid_w if args.full_step else args.step_grid_w
+        step_h = args.grid_h if args.full_step else args.step_grid_h
+        print(f"\n5. Constructing STEP Assembly ({step_w}x{step_h})...")
+        if step_w == args.grid_w and step_h == args.grid_h:
+            part_meshes_step = part_meshes_3mf
+        else:
+            grid_class_step = downsample_priority(arr, step_w, step_h, rotate_deg=args.rotate)
+            part_meshes_step = build_3d_meshes(grid_class_step, args.radius, args.wall, args.height)
+
         out_step_path = os.path.join(WORKSPACE_DIR, args.output_step)
-        export_step(part_meshes, out_step_path)
+        export_step(part_meshes_step, out_step_path, diam_mm=diam_mm, height_mm=args.height)
 
     print(f"\n=== GENERATION COMPLETE in {time.time() - t_start:.2f}s ===")
     print("Files ready for slicing:")
     if not args.skip_3mf:
-        print(f"  * Bambu Studio Project (.3mf): {args.output_3mf} (LOADS IN 1 SECOND WITH ALL FILAMENTS PRE-ASSIGNED)")
+        print(f"  * Bambu Studio Project (.3mf): {args.output_3mf} (LOADS IN 1-2s WITH 5 PRE-CONFIGURED FILAMENTS)")
     if not args.skip_step:
         print(f"  * STEP Assembly (.stp):        {args.output_step}")
 
