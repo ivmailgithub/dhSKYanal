@@ -1,0 +1,8 @@
+Here's the CadQuery script (unchanged, shown above for reference). Now here's an OpenSCAD version — same geometry, but with all the tunable numbers as parameters at the top, which is much easier to tweak interactively (especially with the Customizer panel in OpenSCAD).Good, it installed. Let's render it to check for syntax errors and reasonable geometry.The script renders cleanly in OpenSCAD (valid, single manifold solid, no errors). Cleaning up the test file and delivering the source.I tested it — it renders cleanly in OpenSCAD as a single valid solid, no errors.
+
+Same geometry logic as the Python script, but all the "ASSUMPTION" values (row offsets, slot dimensions, foot top width, etc.) are grouped at the top as plain variables. If you open it in the OpenSCAD app, **Window → Customizer** will give you sliders/fields for each one grouped by section (`[Overall plate]`, `[Slots]`, `[Dovetail foot]`, etc.), so you can drag values and watch the preview update live instead of editing code.
+
+A couple of OpenSCAD-specific notes:
+- The chamfer on the plate top/bottom is done with a `hull()` trick (three stacked cross-sections) rather than a true edge chamfer — it's a common OpenSCAD workaround and looks right, but if you want a crisper chamfer you may want to redo that bit in a tool with native chamfer support (or just leave `EDGE_CHAMFER` small).
+- To export STL/3MF for printing: `openscad -o mounting_plate.stl mounting_plate.scad`, or just hit F6 (render) then F7 (export) in the GUI.
+- Same underside-counterbore TODO as the CadQuery version — not modeled, noted at the bottom of the file.
