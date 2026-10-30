@@ -72,4 +72,11 @@ anyway the fleet manager still doesn't show the rstp streams on all the scopes .
 
 and the ridiculious pricing by celestron for starsense platesolving and starsense guiders on a CO6 twp pices of equipment i have but could be dup'ed by $100 diy kit strapped to your seestar50 where tracking is "iffy"
 
-20260831 so dwarflabs shows drac as guiding 5 min exposures .. so did they do the same ai programming for the wide angle lens and get it to work for 300 sec exposures??  They show an example so maybe it works from the wide angle cam...
+
+
+20260831 so dwarflabs shows drac as guiding 5 min exposures .. so did they do the same ai programming for the wide angle lens and get it to work for 300 sec exposures??  They show an example so maybe it works from the wide angle cam...(202261030 nope .. guiding w/ a mirror inline w/ another cam; finally got celestron starsense guider firmware to update and it broadcast websock to the celestron_origin.py code )
+
+
+
+20261030
+well i'm reminded looking at setiastrosuite pro ... you got a huge unreadable single python file and you depend on ai vibe programming to keep track; fix bugs; fix the bugs that come from the fix ... i've repeated 10 times the escaped char regex is wrong in the output html .. and yeah it fixes it but can't remember the fix ... The new gemini4 argon let loose on finding all the FCC towers on the horizon and added that to the horizon with calculated angle height .. which is tiny but interesting exact waypoints (i got 5 on the horizon)... and then i add FAA transponder lookup because the idea of a real time horizon with airplane lights from your allsky like the vaonis Atlas is neat ... and gemini4 whips out the code and doesn't even use half my weekly quota...  So i look at the pile of SWE books and think ummmm...  books we don't need books where we are going...(Doc)..
